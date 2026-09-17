@@ -83,7 +83,7 @@ Hệ thống phân tách tải xử lý độc lập giữa hai nhân phần c�
 
 ### 4.1. Cảm Biến SHT31 & Giám Sát Cảnh Báo
 - Giao tiếp I2C 400 kHz, xác minh tính toàn vẹn dữ liệu phần cứng bằng mã kiểm tra CRC-8.
-- Xử lý ngưỡng cảnh báo độc lập: Nhiệt độ (20°C - 80°C, mặc định 34.0°C) và Độ ẩm (30% - 99%, mặc định 78.0%).
+- Xử lý ngưỡng cảnh báo độc lập: Nhiệt độ (20°C - 80°C, mặc định 37.0°C) và Độ ẩm (30% - 99%, mặc định 87.0%).
 - Cơ chế phản hồi khi vượt ngưỡng: Kích hoạt còi buzzer ngắt quãng, chuyển LED sang chớp đỏ khẩn cấp, bật cờ `alert: true` trong gói JSON.
 - Cấu hình linh hoạt: Cho phép thay đổi chu kỳ đọc cảm biến (1 - 60s) và chu kỳ phát telemetry (2 - 300s), lưu trữ trực tiếp vào Flash NVS.
 

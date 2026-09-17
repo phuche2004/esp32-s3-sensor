@@ -20,8 +20,8 @@ constexpr uint8_t SHT31_I2C_ADDR = 0x44;
 // ==========================================
 // NGUONG CANH BAO (ALERT THRESHOLDS)
 // ==========================================
-constexpr float TEMP_ALERT_THRESHOLD = 34.0f; // Nhiet do vuot 34 *C -> canh bao
-constexpr float HUM_ALERT_THRESHOLD  = 78.0f; // Do am vuot 78 % -> canh bao
+constexpr float TEMP_ALERT_THRESHOLD = 37.0f; // Nhiet do vuot 37 *C -> canh bao
+constexpr float HUM_ALERT_THRESHOLD  = 87.0f; // Do am vuot 87 % -> canh bao
 
 // ==========================================
 // CHU KY HOAT DONG (TIMING)

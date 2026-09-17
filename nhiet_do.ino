@@ -44,7 +44,7 @@ void loop() {
   }
 
   // LOGIC CẢNH BÁO
-  if (t > 33.0 || h > 78.0) {
+  if (t > 37.0 || h > 87.0) {
     digitalWrite(LED_RED, HIGH);   
     digitalWrite(BUZZER_PIN, HIGH);
     delay(1000);
