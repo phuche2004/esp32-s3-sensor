@@ -1,156 +1,383 @@
-# ESP32-S3 IoT Environment Monitor & LED Controller
+<div align="center">
 
-Tài liệu kỹ thuật hệ thống nhúng giám sát môi trường, điều khiển quang học đa nhân và kiểm thử hiệu năng trên nền vi điều khiển ESP32-S3.
+# 🌡️ ESP32-S3 IoT Environment Monitor
+
+**Real-time environment monitoring system with RGB LED control, Captive Portal, and dual-core stress testing**
+
+[![PlatformIO](https://img.shields.io/badge/PlatformIO-ESP32--S3-orange.svg)](https://platformio.org/)
+[![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v4.4-blue.svg)](https://github.com/espressif/esp-idf)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Made with ❤️](https://img.shields.io/badge/Made%20with-%E2%9D%A4%EF%B8%8F-red.svg)](https://github.com/phuche2004/esp32-s3-sensor)
+
+[Features](#-features) • [Hardware](#%EF%B8%8F-hardware-requirements) • [Installation](#-installation) • [Usage](#-usage) • [API](#-api-reference) • [Contributing](#-contributing)
+
+</div>
 
 ---
 
-## 1. Quick Reference: Các Lệnh PlatformIO Thường Dùng
+## 📸 Demo
 
-Tất cả các lệnh thực thi trong Terminal tại thư mục gốc của dự án (`nhiet_do`):
+> **Note**: Screenshots/GIF của Web UI sẽ được thêm vào đây
 
-```powershell
-# 1. Biên dịch kiểm tra cú pháp và liên kết thư viện (Build)
+---
+
+## ✨ Features
+
+- 🌡️ **SHT31 Sensor Integration** - High-precision temperature (±0.2°C) and humidity (±2% RH) monitoring with I2C CRC-8 verification
+- 🎨 **WS2812 RGB LED Controller** - 6 animation modes with Gamma 2.8 color correction (100 Hz refresh rate)
+  - Static Color, Breathing, Rainbow, Strobe, Temperature Reactive
+- 📡 **Captive Portal** - Auto-setup WiFi with mobile-optimized Web UI
+- 🔐 **WPA2-Enterprise Support** - 802.1x EAP-PEAP authentication for enterprise networks
+- 📊 **Real-time Telemetry** - HTTP POST streaming to custom backend server
+- 🔥 **Dual-Core Stress Test** - CPU load monitoring with FreeRTOS Idle Hooks
+- ⚡ **FreeRTOS Task Management** - Core 0: LED PWM (deterministic), Core 1: Network stack
+- 🌐 **mDNS Responder** - Access via `http://esp.local`
+- 💾 **Persistent Storage** - Configuration saved to NVS Flash
+- 🚨 **Alert System** - Buzzer + LED flash when thresholds exceeded
+
+---
+
+## 🛠️ Hardware Requirements
+
+| Component | Specification |
+|-----------|---------------|
+| **MCU** | ESP32-S3 (Dual-Core Xtensa LX7 @ 240MHz) |
+| **Flash** | 16MB QSPI |
+| **PSRAM** | 8MB OPI |
+| **Sensor** | Sensirion SHT31-DIS (I2C, 0x44) |
+| **LED** | WS2812 RGB (built-in or external) |
+| **Buzzer** | Active Buzzer (5V) |
+| **Button** | BOOT button (GPIO 0) for WiFi reset |
+
+### 📌 Pinout
+
+| GPIO | Device | Protocol | Description |
+|------|--------|----------|-------------|
+| `8` | SHT31 SDA | I2C (400kHz) | Data line |
+| `9` | SHT31 SCL | I2C (400kHz) | Clock line |
+| `10` | Buzzer | Digital Out | Alert buzzer |
+| `13` | Status LED | Digital Out | System status |
+| `48` | WS2812 | RMT | RGB LED data |
+| `0` | BOOT Button | Input Pull-up | Hold >1s to reset WiFi |
+
+---
+
+## 🚀 Installation
+
+### Prerequisites
+
+- [PlatformIO Core](https://platformio.org/) or [PlatformIO IDE](https://platformio.org/platformio-ide)
+- USB cable for flashing
+- Python 3.7+ (for telemetry server)
+
+### Quick Start
+
+1. **Clone repository**
+   ```bash
+   git clone https://github.com/phuche2004/esp32-s3-sensor.git
+   cd esp32-s3-sensor
+   ```
+
+2. **Build & Upload**
+   ```bash
+   pio run -t upload
+   ```
+
+3. **Monitor Serial Output**
+   ```bash
+   pio device monitor -b 115200
+   ```
+
+### Complete Build Commands
+
+
+```bash
+# Build only (verify code)
 pio run
 
-# 2. Biên dịch và nạp firmware qua cổng COM3 (Upload)
+# Upload to device (auto-detect COM port)
 pio run -t upload
 
-# 3. Mở Serial Monitor theo dõi log (115200 baud)
-pio device monitor -p COM3 -b 115200
-
-# 4. Lệnh kết hợp: Nạp firmware xong tự động mở Serial Monitor
+# Upload + Monitor (Windows: COM3, Linux/Mac: /dev/ttyUSB0)
 pio run -t upload -t monitor
 
-# 5. Xóa toàn bộ file build trung gian để build lại từ đầu (Clean)
+# Clean build files
 pio run -t clean
 
-# 6. Liệt kê danh sách các cổng COM đang kết nối
+# List available serial ports
 pio device list
 ```
 
-*Lưu ý: Nhấn tổ hợp phím `Ctrl + C` để đóng Serial Monitor trước khi thực hiện lệnh nạp firmware tiếp theo, tránh xung đột quyền truy cập cổng COM.*
+---
+
+## 📱 Usage
+
+### First-Time Setup
+
+1. **Connect to WiFi**
+   - Power on ESP32-S3
+   - Connect to WiFi AP `ESP32-S3` (open network)
+   - Browser will auto-redirect to Captive Portal
+   - Enter WiFi credentials (WPA2-PSK or WPA2-Enterprise)
+
+2. **Access Web Interface**
+   - After connection: `http://esp.local` or `http://<device-ip>`
+   - Navigate through 4 tabs:
+     - 📶 **WiFi Setup** - Network configuration
+     - 📊 **Dashboard** - Real-time sensor data
+     - 🎨 **LED Control** - RGB animation settings
+     - 📈 **History** - Temperature/Humidity chart (last 32 data points)
+
+### WiFi Reset
+
+Hold BOOT button for **>1 second** to clear saved WiFi credentials and restart in AP mode.
 
 ---
 
-## 2. Phần Cứng & Sơ Đồ Chân (Hardware Specs & Pinout)
+## 🎨 LED Animation Modes
 
-- **Vi điều khiển**: ESP32-S3 (Xtensa Dual-Core 32-bit LX7 @ 240MHz, 16MB Flash QIO, 8MB PSRAM OPI).
-- **Cảm biến môi trường**: Sensirion SHT31-DIS (Độ phân giải: 0.01°C, 0.01% RH; Sai số: ±0.2°C, ±2% RH).
-- **Cơ cấu chấp hành**: 1x LED RGB WS2812 (tích hợp trên bo mạch), 1x Active Buzzer, 1x Status LED, 1x Phím nhấn BOOT.
+| Mode | Description | Example Use Case |
+|------|-------------|------------------|
+| `0` | Off | Power saving |
+| `1` | Static Color | Custom ambient light |
+| `2` | Breathing | Default purple cyberpunk aesthetic |
+| `3` | Rainbow | Party mode, full spectrum |
+| `4` | Strobe | EDM club effect (135 BPM) |
+| `5` | Temperature Reactive | Visual temperature indicator (Blue→Yellow→Red) |
 
-| Chân GPIO | Thiết Bị Ngoại Vi | Giao Thức / Chế Độ Hoạt Động | Mô Tả Kỹ Thuật |
-| :--- | :--- | :--- | :--- |
-| `GPIO 8` | SHT31 SDA | I2C Fast Mode (400 kHz) | Tuyến dữ liệu I2C |
-| `GPIO 9` | SHT31 SCL | I2C Fast Mode (400 kHz) | Tuyến xung nhịp I2C |
-| `GPIO 10` | Active Buzzer | Digital Output | Còi báo động khi vượt ngưỡng đo |
-| `GPIO 13` | Status LED | Digital Output | Đèn báo trạng thái hệ thống |
-| `GPIO 48` | WS2812 RGB LED | RMT Peripheral | Bộ phát xung RMT, dữ liệu 24-bit GRB |
-| `GPIO 0` | Phím BOOT | Input Pull-up | Nhấn giữ > 1s để xóa cấu hình Wi-Fi NVS |
+All modes support **brightness** (0-255) and **speed** (1-10) adjustment.
 
 ---
 
-## 3. Kiến Trúc Đa Nhiệm FreeRTOS (Dual-Core SMP)
+## 📡 API Reference
 
-Hệ thống phân tách tải xử lý độc lập giữa hai nhân phần cứng nhằm đảm bảo tính tiền định (deterministic timing) cho tín hiệu quang học và giao diện mạng:
+### Sensor Data
+
+**GET** `/sensor`
+
+Response:
+```json
+{
+  "temp": 34.2,
+  "hum": 65.5,
+  "valid": true,
+  "alert": false,
+  "chipTemp": 45.3,
+  "cpu": 2.1,
+  "cpu0": 1.8,
+  "cpu1": 2.4,
+  "stressActive": false,
+  "stressSec": 0
+}
+```
+
+### LED Control
+
+**GET** `/api/led` - Get current LED config
+
+**POST** `/api/led` - Set LED config
+```json
+{
+  "mode": 2,
+  "r": 168,
+  "g": 85,
+  "b": 247,
+  "brightness": 128,
+  "speed": 5
+}
+```
+
+**POST** `/api/led/reset` - Reset to default (purple breathing)
+
+### Sensor Configuration
+
+**GET** `/api/sensor-cfg` - Get thresholds and intervals
+
+**POST** `/api/sensor-cfg` - Update config
+```json
+{
+  "temp_alert": 35.0,
+  "hum_alert": 80.0,
+  "read_interval": 2,
+  "send_interval": 10
+}
+```
+
+### WiFi Management
+
+**GET** `/scan` - Scan nearby WiFi networks
+
+**POST** `/save` - Save WiFi credentials
+```json
+{
+  "ssid": "MyNetwork",
+  "password": "password123",
+  "is_ent": false,
+  "username": "",
+  "backend": "http://192.168.1.100:3000/api/data"
+}
+```
+
+**POST** `/shutdown-ap` - Disable Access Point (keep Station mode)
+
+### Stress Test
+
+**POST** `/api/stress-test` - Start/stop CPU stress test
+```json
+{
+  "action": "start"  // or "stop"
+}
+```
+
+**GET** `/api/stress-test` - Get stress test status
+
+---
+
+## 🔧 Telemetry Server
+
+A Python Flask server is included for receiving telemetry data.
+
+**Start server:**
+```bash
+cd esp32-s3-sensor
+python server.py
+```
+
+Server listens on `http://0.0.0.0:3000/api/data`
+
+**Payload format:**
+```json
+{
+  "temperature": 34.2,
+  "humidity": 65.5,
+  "chip_temperature": 45.3,
+  "cpu_load": 2.1,
+  "alert": false,
+  "timestamp": 1234567890
+}
+```
+
+---
+
+## 🏗️ Architecture
+
+### Dual-Core Task Distribution
 
 ```
-                    ESP32-S3 (2 Cores @ 240MHz)
-            ┌─────────────────────┬─────────────────────┐
-            │       Core 0        │       Core 1        │
-            ├─────────────────────┼─────────────────────┤
-            │ • LedTaskCore0      │ • Arduino loopTask  │
-            │   (100 Hz, chu kỳ   │ • WebServer         │
-            │    10ms cố định)    │   (HTTP Port 80)    │
-            │ • Bảng tra CIE 1931 │ • DNSServer         │
-            │   Gamma 2.8 LUT     │   (Captive Portal)  │
-            │ • Wi-Fi Driver MAC  │ • SHT31 I2C Driver  │
-            │ • Idle Hook Core 0  │ • Telemetry Client  │
-            │                     │ • Idle Hook Core 1  │
-            └─────────────────────┴─────────────────────┘
+ESP32-S3 (240MHz Dual-Core)
+├── Core 0 (Deterministic)
+│   ├── LED PWM Task (100Hz)
+│   ├── Gamma 2.8 LUT
+│   └── WiFi MAC Driver
+└── Core 1 (Network Stack)
+    ├── HTTP Server (Port 80)
+    ├── DNS Server (Captive Portal)
+    ├── SHT31 I2C Driver
+    └── Telemetry Client
 ```
 
-- **Core 0**:
-  - `LedTaskCore0` (Priority 1): Cập nhật trạng thái màu sắc chu kỳ cố định 10ms (**tần số làm tươi 100 Hz**), hiệu chỉnh phi tuyến Gamma 2.8. Tách biệt hoàn toàn khỏi Core 1, loại bỏ hiện tượng giật nhịp quang học khi có tải mạng.
-  - Wi-Fi Driver Task của ESP-IDF (Priority 23): Xử lý lớp MAC và quản lý khung phát sóng Beacon.
-  - Idle Hook Core 0: Đếm chu kỳ nhàn rỗi phục vụ tính toán mức tải % CPU Core 0.
-- **Core 1**:
-  - `loopTask` (Priority 1): Điều phối máy chủ HTTP, DNS Server phân giải tên miền Captive Portal, lấy mẫu cảm biến I2C non-blocking và truyền dữ liệu telemetry.
-  - Idle Hook Core 1: Đếm chu kỳ nhàn rỗi phục vụ tính toán mức tải % CPU Core 1.
+### Project Structure
+
+```
+esp32-s3-sensor/
+├── include/
+│   └── Config.h              # Pin definitions & constants
+├── src/
+│   ├── main.cpp              # Entry point & FreeRTOS setup
+│   ├── drivers/              # Hardware abstraction layer
+│   │   ├── SHT31Sensor.cpp   # Temperature/Humidity sensor
+│   │   ├── RgbController.cpp # WS2812 LED driver (Core 0)
+│   │   ├── Alarm.cpp         # Buzzer controller
+│   │   ├── DataLogger.cpp    # History buffer (32 samples)
+│   │   └── StressTester.cpp  # CPU stress test utility
+│   └── network/              # Network stack
+│       ├── WiFiService.cpp   # WiFi STA/AP management
+│       ├── CaptivePortal.cpp # HTTP server & API routes
+│       ├── TelemetryService.cpp # HTTP POST client
+│       ├── StorageManager.cpp   # NVS Flash read/write
+│       └── web/              # Embedded Web UI (HTML/CSS/JS)
+│           ├── WebPage.h
+│           ├── WebStyles.h
+│           └── WebScript.h
+├── platformio.ini            # PlatformIO config
+├── server.py                 # Python telemetry receiver
+└── README.md
+```
 
 ---
 
-## 4. Các Module Chức Năng
+## 🔬 Technical Details
 
-### 4.1. Cảm Biến SHT31 & Giám Sát Cảnh Báo
-- Giao tiếp I2C 400 kHz, xác minh tính toàn vẹn dữ liệu phần cứng bằng mã kiểm tra CRC-8.
-- Xử lý ngưỡng cảnh báo độc lập: Nhiệt độ (20°C - 80°C, mặc định 34.0°C) và Độ ẩm (30% - 99%, mặc định 78.0%).
-- Cơ chế phản hồi khi vượt ngưỡng: Kích hoạt còi buzzer ngắt quãng, chuyển LED sang chớp đỏ khẩn cấp, bật cờ `alert: true` trong gói JSON.
-- Cấu hình linh hoạt: Cho phép thay đổi chu kỳ đọc cảm biến (1 - 60s) và chu kỳ phát telemetry (2 - 300s), lưu trữ trực tiếp vào Flash NVS.
+### Color Correction
 
-### 4.2. Bộ Điều Khiển LED WS2812 (RMT)
-- 6 chế độ hoạt động:
-  - `0`: Tắt LED (tiết kiệm điện năng).
-  - `1`: Màu tĩnh (Static Color).
-  - `2`: Nhịp thở (Breathing) - Tần số làm tươi 100 Hz (Mặc định: Tím Cyber `#A855F7`).
-  - `3`: Cầu vồng quang phổ (Rainbow 256 bước).
-  - `4`: Strobe vũ trường (Bar Club EDM 135 BPM).
-  - `5`: Biểu thị mức nhiệt (Temp Reactive: Xanh -> Vàng -> Đỏ).
-- Hiệu chỉnh màu sắc: Sử dụng bảng tra cứu 256 phần tử Gamma 2.8 theo không gian thị giác chuẩn CIE 1931.
+RGB values undergo **Gamma 2.8 correction** using a 256-entry lookup table based on CIE 1931 standard:
 
-### 4.3. Captive Portal & Web UI
-- Cơ chế mạng: SoftAP (SSID: `ESP32-S3`, Open) hoạt động song song Station (hỗ trợ WPA2-Personal và WPA2-Enterprise 802.1x EAP-PEAP).
-- Phân giải tên miền: Tích hợp mDNS Responder `http://esp.local`.
-- Tối ưu hóa Web di động:
-  - Bánh xe màu 260px sử dụng `transform: translate3d` và `requestAnimationFrame`, đồng bộ **60 - 120 FPS** theo tần số quét màn hình client (chuẩn màn hình thường và ProMotion / AMOLED 120Hz).
-  - Phân tách vùng cảm ứng hình học: Bắt sự kiện chọn màu trong bán kính `r <= R_wheel`; khu vực ngoài hình tròn tự do cuộn trang (CSS `touch-action: pan-y`).
+```cpp
+gamma_lut[i] = pow(i / 255.0, 2.8) * 255;
+```
 
-### 4.4. Module Kiểm Thử Ép Tải 100% CPU Dual-Core & Giám Sát Phần Cứng
-- **Cơ chế ép tải**: Kích hoạt 2 FreeRTOS Task tính toán dấu phẩy động (`sinf`, `cosf`, `sqrtf`) ghim đồng thời trên Core 0 và Core 1.
-- **An toàn hệ thống**: Nhả 1 tick `vTaskDelay(1)` sau mỗi 40.000 phép tính để Task Watchdog Timer (TWDT) không bị ngắt, duy trì tải thực tế ~99.9% không gây crash/reset chip.
-- **Bộ đếm thời gian xuôi**: Đếm thời gian thực thi tăng dần (`00:00 -> MM:SS`), cho phép bắt đầu/dừng thủ công.
-- **Giám sát tải CPU thực tế**: Sử dụng FreeRTOS Idle Hook trên cả Core 0 và Core 1 kèm bộ lọc trung bình động EMA:
-  $$\text{CPU Load} = \left(1.0 - \frac{\text{Idle Count}}{\text{Max Idle Count}}\right) \times 100\%$$
-- **Giám sát nhiệt độ bán dẫn**: Đọc trực tiếp cảm biến nhiệt độ tích hợp trong die silicon ESP32-S3 qua hàm `temperatureRead()`.
+This ensures perceptually linear brightness transitions.
+
+### CPU Load Calculation
+
+FreeRTOS Idle Hooks count CPU idle cycles. Load is calculated using Exponential Moving Average (EMA):
+
+```
+CPU Load = (1.0 - idle_count / max_idle_count) × 100%
+```
+
+### I2C Communication
+
+SHT31 sensor uses **400kHz Fast Mode** with CRC-8 verification on every read. Timeout: 500ms.
 
 ---
 
-## 5. Danh Sách REST API Endpoints
+## 🤝 Contributing
 
-Máy chủ Web lắng nghe trên cổng 80, hỗ trợ các endpoint sau:
+Contributions are welcome! Please follow these steps:
 
-| Endpoint | Phương Thức | Tham Số Truyền Vào | Chức Năng / Định Dạng Dữ Liệu |
-| :--- | :--- | :--- | :--- |
-| `/` | `GET` | - | Trả về giao diện Web Captive Portal (Chunked streaming) |
-| `/scan` | `GET` | - | Dò quét Wi-Fi lân cận, trả về JSON: `[{ssid, rssi}]` |
-| `/save` | `POST` | `ssid, password, is_ent, username, backend` | Lưu thông số Wi-Fi vào NVS và kết nối Station |
-| `/status` | `GET` | - | Trạng thái kết nối: `{"state":"...", "ip":"...", "error":"..."}` |
-| `/sensor` | `GET` | - | Dữ liệu thời gian thực: `{temp, hum, valid, alert, chipTemp, cpu, cpu0, cpu1, stressActive, stressSec}` |
-| `/api/sensor-cfg` | `GET` | - | Đọc thông số: `{tempAlert, humAlert, readInterval, sendInterval}` |
-| `/api/sensor-cfg` | `POST` | `temp_alert, hum_alert, read_interval, send_interval, reset` | Cập nhật ngưỡng và chu kỳ vào Flash NVS |
-| `/api/led` | `GET` | - | Đọc cấu hình LED: `{mode, r, g, b, brightness, speed}` |
-| `/api/led` | `POST` | `mode, r, g, b, brightness, speed` | Áp dụng cấu hình LED và ghi NVS |
-| `/api/led/reset` | `POST` | - | Đưa cấu hình LED về mặc định (Nhịp thở Tím) |
-| `/api/stress-test` | `POST` | `action=start` hoặc `action=stop` | Kích hoạt hoặc dừng ép tải 100% CPU Dual-Core |
-| `/api/stress-test` | `GET` | - | Trạng thái test: `{running, elapsedSec, chipTemp, cpu, cpu0, cpu1}` |
-| `/shutdown-ap` | `POST` | - | Tắt điểm phát Access Point, giữ kết nối Station |
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
+
+### Development Guidelines
+
+- Follow existing code style (2 spaces, camelCase for variables)
+- Add comments for complex logic
+- Test on real hardware before submitting PR
+- Update documentation if adding new features
 
 ---
 
-## 6. Dịch Vụ Telemetry Backend
+## 📝 License
 
-- Giao thức truyền: HTTP POST định kỳ (Content-Type: `application/json`).
-- Cấu trúc bản tin Telemetry:
-  ```json
-  {
-    "temperature": 34.21,
-    "humidity": 64.75,
-    "chip_temperature": 44.5,
-    "cpu_load": 2.1,
-    "alert": false,
-    "timestamp": 123456
-  }
-  ```
-- Script giả lập backend server (`server.py`) trên cổng 3000:
-  ```powershell
-  python server.py
-  ```
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## 🙏 Acknowledgments
+
+- [PlatformIO](https://platformio.org/) - Cross-platform build system
+- [Adafruit](https://github.com/adafruit) - SHT31 sensor library
+- [FastLED Community](https://github.com/FastLED/FastLED) - Color theory & gamma correction inspiration
+- [ESP-IDF](https://github.com/espressif/esp-idf) - Espressif IoT Development Framework
+
+---
+
+## 📞 Support
+
+- 🐛 **Bug Reports**: [GitHub Issues](https://github.com/phuche2004/esp32-s3-sensor/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/phuche2004/esp32-s3-sensor/discussions)
+- 📧 **Email**: phuche2004p@gmail.com
+
+---
+
+<div align="center">
+
+**[⬆ Back to Top](#-esp32-s3-iot-environment-monitor)**
+
+Made with ❤️ by [phuche2004](https://github.com/phuche2004)
+
+</div>
