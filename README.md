@@ -17,7 +17,21 @@
 
 ## 📸 Demo
 
-> **Note**: Screenshots/GIF của Web UI sẽ được thêm vào đây
+### Web Interface Tabs
+
+<div align="center">
+
+| WiFi Setup | Dashboard |
+|:----------:|:---------:|
+| ![WiFi Setup](docs/images/tab1-wifi-setup.png) | ![Dashboard](docs/images/tab2-dashboard.png) |
+| Configure WiFi credentials & backend server | Real-time sensor data & system monitoring |
+
+| LED Control | History Chart |
+|:-----------:|:-------------:|
+| ![LED Control](docs/images/tab3-led-control.png) | ![History Chart](docs/images/tab4-history-chart.png) |
+| 6 animation modes with color picker | Temperature & humidity trend graph |
+
+</div>
 
 ---
 

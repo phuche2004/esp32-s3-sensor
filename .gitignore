@@ -8,6 +8,7 @@ compile_commands.json
 
 # Cache
 .cache/
+.playwright-mcp/
 
 # OS
 .DS_Store
