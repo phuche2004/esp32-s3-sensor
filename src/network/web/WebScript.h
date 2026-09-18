@@ -388,19 +388,23 @@ function switchTab(tab) {
     var btnSensor = document.getElementById('tabBtnSensor');
     var btnLed = document.getElementById('tabBtnLed');
     var btnChart = document.getElementById('tabBtnChart');
+    var btnPower = document.getElementById('tabBtnPower');
     var cWifi = document.getElementById('tabContentWifi');
     var cSensor = document.getElementById('tabContentSensor');
     var cLed = document.getElementById('tabContentLed');
     var cChart = document.getElementById('tabContentChart');
+    var cPower = document.getElementById('tabContentPower');
 
     if (btnWifi) btnWifi.classList.remove('active');
     if (btnSensor) btnSensor.classList.remove('active');
     if (btnLed) btnLed.classList.remove('active');
     if (btnChart) btnChart.classList.remove('active');
+    if (btnPower) btnPower.classList.remove('active');
     if (cWifi) cWifi.style.display = 'none';
     if (cSensor) cSensor.style.display = 'none';
     if (cLed) cLed.style.display = 'none';
     if (cChart) cChart.style.display = 'none';
+    if (cPower) cPower.style.display = 'none';
 
     if (tab === 'wifi') {
         if (btnWifi) btnWifi.classList.add('active');
@@ -419,6 +423,10 @@ function switchTab(tab) {
         if (cChart) cChart.style.display = 'block';
         syncDeviceTime();
         loadHistoryChart();
+    } else if (tab === 'power') {
+        if (btnPower) btnPower.classList.add('active');
+        if (cPower) cPower.style.display = 'block';
+        loadPowerSettings();
     }
 }
 
@@ -1457,6 +1465,176 @@ function initChartEvents() {
     });
 }
 
+// ==========================================
+// POWER MANAGEMENT LOGIC
+// ==========================================
+var currentPowerConfig = {
+    cpuFreq: 240,
+    wifiMode: 0,
+    bluetooth: false,
+    ledHz: 100,
+    estimatedCurrent: 218.0,
+    estimatedSavings: 0.0,
+    actualCpuFreq: 240
+};
+
+function calculateLocalPower() {
+    var base = 30.0;
+    var cpu = (currentPowerConfig.cpuFreq === 80) ? 40.0 : (currentPowerConfig.cpuFreq === 160 ? 70.0 : 100.0);
+    var wifi = (currentPowerConfig.wifiMode === 2) ? 40.0 : (currentPowerConfig.wifiMode === 1 ? 60.0 : 80.0);
+    var bt = currentPowerConfig.bluetooth ? 12.0 : 0.0;
+    var led = (currentPowerConfig.ledHz <= 30) ? 3.0 : (currentPowerConfig.ledHz <= 50 ? 5.0 : 8.0);
+    var total = base + cpu + wifi + bt + led;
+    var defaultPower = 218.0;
+    var savings = defaultPower - total;
+    if (savings < 0) savings = 0;
+    var tempDelta = (savings * 0.05).toFixed(1);
+
+    var curVal = document.getElementById('pwrCurrentVal');
+    var curBadge = document.getElementById('pwrCurrentBadge');
+    var savVal = document.getElementById('pwrSavingsVal');
+    var savBadge = document.getElementById('pwrSavingsBadge');
+    var tempDeltaEl = document.getElementById('pwrTempDelta');
+
+    if (curVal) curVal.innerText = total.toFixed(0) + ' mA';
+    if (curBadge) curBadge.innerText = total.toFixed(0) + ' mA';
+    if (savVal) savVal.innerText = savings.toFixed(0) + ' mA';
+    if (savBadge) savBadge.innerText = savings.toFixed(0) + ' mA';
+    if (tempDeltaEl) tempDeltaEl.innerText = '-' + tempDelta + '°C';
+}
+
+function updatePowerUI() {
+    [80, 160, 240].forEach(function(f) {
+        var b = document.getElementById('cpuBtn' + f);
+        if (b) {
+            if (currentPowerConfig.cpuFreq === f) b.classList.add('active');
+            else b.classList.remove('active');
+        }
+    });
+
+    [0, 1, 2].forEach(function(m) {
+        var b = document.getElementById('wifiBtn' + m);
+        if (b) {
+            if (currentPowerConfig.wifiMode === m) b.classList.add('active');
+            else b.classList.remove('active');
+        }
+    });
+
+    [30, 50, 100].forEach(function(h) {
+        var b = document.getElementById('ledBtn' + h);
+        if (b) {
+            if (currentPowerConfig.ledHz === h) b.classList.add('active');
+            else b.classList.remove('active');
+        }
+    });
+
+    var btToggle = document.getElementById('pwrBluetooth');
+    if (btToggle) btToggle.checked = !!currentPowerConfig.bluetooth;
+
+    var pBal = document.getElementById('presetBalanced');
+    var pLow = document.getElementById('presetLow');
+    var pMax = document.getElementById('presetMax');
+    if (pBal) pBal.classList.remove('active');
+    if (pLow) pLow.classList.remove('active');
+    if (pMax) pMax.classList.remove('active');
+
+    if (currentPowerConfig.cpuFreq === 160 && currentPowerConfig.wifiMode === 1 && currentPowerConfig.ledHz === 50 && !currentPowerConfig.bluetooth) {
+        if (pBal) pBal.classList.add('active');
+    } else if (currentPowerConfig.cpuFreq === 80 && currentPowerConfig.wifiMode === 2 && currentPowerConfig.ledHz === 30 && !currentPowerConfig.bluetooth) {
+        if (pLow) pLow.classList.add('active');
+    } else if (currentPowerConfig.cpuFreq === 240 && currentPowerConfig.wifiMode === 0 && currentPowerConfig.ledHz === 100 && !currentPowerConfig.bluetooth) {
+        if (pMax) pMax.classList.add('active');
+    }
+
+    var badgeCpu = document.getElementById('pwrActualCpuBadge');
+    if (badgeCpu) badgeCpu.innerText = (currentPowerConfig.actualCpuFreq || currentPowerConfig.cpuFreq) + ' MHz';
+
+    calculateLocalPower();
+}
+
+function selectCpuFreq(freq) {
+    currentPowerConfig.cpuFreq = freq;
+    updatePowerUI();
+}
+
+function selectWifiMode(mode) {
+    currentPowerConfig.wifiMode = mode;
+    updatePowerUI();
+}
+
+function selectLedHz(hz) {
+    currentPowerConfig.ledHz = hz;
+    updatePowerUI();
+}
+
+function toggleBluetooth(enabled) {
+    currentPowerConfig.bluetooth = enabled;
+    updatePowerUI();
+}
+
+function applyPowerPreset(preset) {
+    if (preset === 'balanced') {
+        currentPowerConfig.cpuFreq = 160;
+        currentPowerConfig.wifiMode = 1;
+        currentPowerConfig.bluetooth = false;
+        currentPowerConfig.ledHz = 50;
+    } else if (preset === 'low') {
+        currentPowerConfig.cpuFreq = 80;
+        currentPowerConfig.wifiMode = 2;
+        currentPowerConfig.bluetooth = false;
+        currentPowerConfig.ledHz = 30;
+    } else if (preset === 'max') {
+        currentPowerConfig.cpuFreq = 240;
+        currentPowerConfig.wifiMode = 0;
+        currentPowerConfig.bluetooth = false;
+        currentPowerConfig.ledHz = 100;
+    }
+    updatePowerUI();
+    applyPowerSettings();
+}
+
+function loadPowerSettings() {
+    fetch('/api/power')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data) {
+                currentPowerConfig.cpuFreq = data.cpuFreq;
+                currentPowerConfig.wifiMode = data.wifiMode;
+                currentPowerConfig.bluetooth = !!data.bluetooth;
+                currentPowerConfig.ledHz = data.ledHz;
+                currentPowerConfig.actualCpuFreq = data.actualCpuFreq || data.cpuFreq;
+                updatePowerUI();
+            }
+        })
+        .catch(function(e) {
+            console.error('Loi tai cau hinh power:', e);
+        });
+}
+
+function applyPowerSettings() {
+    var params = new URLSearchParams({
+        cpu_freq: currentPowerConfig.cpuFreq,
+        wifi_mode: currentPowerConfig.wifiMode,
+        bluetooth: currentPowerConfig.bluetooth ? 'true' : 'false',
+        led_hz: currentPowerConfig.ledHz
+    });
+
+    fetch('/api/power?' + params.toString(), { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(res) {
+            var t = document.getElementById('powerToast');
+            if (t) {
+                t.innerText = res.message || 'Đã áp dụng cấu hình tối ưu năng lượng!';
+                t.style.display = 'block';
+                setTimeout(function() { t.style.display = 'none'; }, 2500);
+            }
+            loadPowerSettings();
+        })
+        .catch(function(err) {
+            console.error('Loi ap dung cau hinh power:', err);
+        });
+}
+
 // Khoi chay khi load trang
 document.addEventListener('DOMContentLoaded', function() {
     initColorWheelEvents();
@@ -1464,6 +1642,7 @@ document.addEventListener('DOMContentLoaded', function() {
     syncDeviceTime();
     fetchLedConfig();
     fetchSensorSettings();
+    loadPowerSettings();
 });
 // Fallback chay ngay neu da load
 initColorWheelEvents();
@@ -1471,6 +1650,7 @@ initChartEvents();
 syncDeviceTime();
 fetchLedConfig();
 fetchSensorSettings();
+loadPowerSettings();
 
 function resetWifiCredentials() {
     if (!confirm('Xác nhận: Xóa cấu hình Wi-Fi và khởi động lại?\n\nESP32 sẽ phát lại Hotspot để cài đặt lại từ đầu.')) return;

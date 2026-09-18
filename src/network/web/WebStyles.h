@@ -646,19 +646,23 @@ input:checked + .slider:before { transform: translateX(20px); }
     border-radius: 14px;
     padding: 4px;
     margin-bottom: 18px;
-    gap: 4px;
+    gap: 3px;
+    overflow-x: auto;
+    scrollbar-width: none;
 }
+.tab-nav::-webkit-scrollbar { display: none; }
 .tab-btn {
     flex: 1;
+    min-width: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 5px;
-    padding: 9px 5px;
+    gap: 4px;
+    padding: 8px 3px;
     background: transparent;
     border: none;
     color: #94a3b8;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     border-radius: 10px;
     cursor: pointer;

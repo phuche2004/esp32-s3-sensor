@@ -112,6 +112,13 @@ Hệ thống phân tách tải xử lý độc lập giữa hai nhân phần c�
   $$\text{CPU Load} = \left(1.0 - \frac{\text{Idle Count}}{\text{Max Idle Count}}\right) \times 100\%$$
 - **Giám sát nhiệt độ bán dẫn**: Đọc trực tiếp cảm biến nhiệt độ tích hợp trong die silicon ESP32-S3 qua hàm `temperatureRead()`.
 
+### 4.5. Module Quản Lý & Tối Ưu Năng Lượng (Power Management)
+- **Điều chỉnh tần số CPU tức thì (Dynamic Frequency Scaling)**: Thay đổi giữa 80MHz, 160MHz và 240MHz thời gian thực qua `setCpuFrequencyMhz()` không cần khởi động lại.
+- **Wi-Fi Power Save Modes**: Hỗ trợ 3 chế độ tiết kiệm điện Wi-Fi (`FULL` = 0ms delay, `MIN_MODEM` = +3ms, `MAX_MODEM` = +10ms) qua `esp_wifi_set_ps()`.
+- **Quản lý Bluetooth Controller**: Bật/tắt radio Bluetooth để giảm ~12mA dòng tiêu thụ nền.
+- **Tần số làm tươi LED RGB linh hoạt**: Cho phép điều chỉnh tần số quét LED (30Hz, 50Hz, 100Hz) để giảm tải và tiêu thụ điện.
+- **Mô hình tính toán công suất & nhiệt lượng**: Ước tính dòng điện tiêu thụ (mA), công suất tiết kiệm được so với mặc định và mức giảm nhiệt độ chip silicon tương ứng.
+
 ---
 
 ## 5. Danh Sách REST API Endpoints
@@ -130,6 +137,8 @@ Máy chủ Web lắng nghe trên cổng 80, hỗ trợ các endpoint sau:
 | `/api/led` | `GET` | - | Đọc cấu hình LED: `{mode, r, g, b, brightness, speed}` |
 | `/api/led` | `POST` | `mode, r, g, b, brightness, speed` | Áp dụng cấu hình LED và ghi NVS |
 | `/api/led/reset` | `POST` | - | Đưa cấu hình LED về mặc định (Nhịp thở Tím) |
+| `/api/power` | `GET` | - | Đọc thông số điện năng: `{cpuFreq, wifiMode, bluetooth, ledHz, estimatedCurrent, estimatedSavings, actualCpuFreq}` |
+| `/api/power` | `POST` | `cpu_freq, wifi_mode, bluetooth, led_hz` | Cấu hình tần số CPU, WiFi Modem Sleep, LED Hz, Bluetooth thời gian thực |
 | `/api/stress-test` | `POST` | `action=start` hoặc `action=stop` | Kích hoạt hoặc dừng ép tải 100% CPU Dual-Core |
 | `/api/stress-test` | `GET` | - | Trạng thái test: `{running, elapsedSec, chipTemp, cpu, cpu0, cpu1}` |
 | `/shutdown-ap` | `POST` | - | Tắt điểm phát Access Point, giữ kết nối Station |
