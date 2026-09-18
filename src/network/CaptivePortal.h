@@ -6,10 +6,11 @@
 #include "WiFiService.h"
 #include "StorageManager.h"
 #include "../drivers/RgbController.h"
+#include "../drivers/PowerManager.h"
 
 class CaptivePortal {
 public:
-    CaptivePortal(WiFiService &wifiService, StorageManager &storage, RgbController &rgbController, SensorSettings &sensorSettings);
+    CaptivePortal(WiFiService &wifiService, StorageManager &storage, RgbController &rgbController, SensorSettings &sensorSettings, PowerManager &powerManager);
 
     void init();
     void loop();
@@ -20,6 +21,7 @@ private:
     StorageManager &storage;
     RgbController &rgbController;
     SensorSettings &sensorSettings;
+    PowerManager &powerManager;
     WebServer server;
     DNSServer dnsServer;
     bool active;
@@ -38,6 +40,8 @@ private:
     void handleLedGet();
     void handleLedSet();
     void handleLedReset();
+    void handlePowerGet();
+    void handlePowerSet();
     void handleSensorConfigGet();
     void handleSensorConfigSet();
     void handleShutdownAP();

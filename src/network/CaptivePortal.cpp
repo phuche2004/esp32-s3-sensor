@@ -5,8 +5,8 @@
 #include "../drivers/DataLogger.h"
 #include <WiFi.h>
 
-CaptivePortal::CaptivePortal(WiFiService &wifiService, StorageManager &storage, RgbController &rgbController, SensorSettings &sensorSettings)
-    : wifiService(wifiService), storage(storage), rgbController(rgbController), sensorSettings(sensorSettings),
+CaptivePortal::CaptivePortal(WiFiService &wifiService, StorageManager &storage, RgbController &rgbController, SensorSettings &sensorSettings, PowerManager &powerManager)
+    : wifiService(wifiService), storage(storage), rgbController(rgbController), sensorSettings(sensorSettings), powerManager(powerManager),
       server(80), active(false), currentTemp(0.0f), currentHum(0.0f), sensorValid(false), countdownTriggered(false) {}
 
 void CaptivePortal::init() {
@@ -28,6 +28,8 @@ void CaptivePortal::setupRoutes() {
     this->server.on("/api/led", HTTP_GET, [this]() { this->handleLedGet(); });
     this->server.on("/api/led", HTTP_POST, [this]() { this->handleLedSet(); });
     this->server.on("/api/led/reset", HTTP_POST, [this]() { this->handleLedReset(); });
+    this->server.on("/api/power", HTTP_GET, [this]() { this->handlePowerGet(); });
+    this->server.on("/api/power", HTTP_POST, [this]() { this->handlePowerSet(); });
     this->server.on("/api/stress-test", HTTP_POST, [this]() { this->handleStressTest(); });
     this->server.on("/api/stress-test", HTTP_GET, [this]() { this->handleStressTest(); });
     this->server.on("/api/history", HTTP_GET, [this]() { this->handleHistoryGet(); });
@@ -354,3 +356,56 @@ void CaptivePortal::handleSyncTime() {
     this->server.send(400, "application/json", "{\"status\":\"error\"}");
 }
 
+
+void CaptivePortal::handlePowerGet() {
+    String json = "{";
+    json += "\"cpuFreq\":" + String((int)this->powerManager.getCurrentCpuFreq()) + ",";
+    json += "\"wifiMode\":" + String((int)this->powerManager.getWifiPowerMode()) + ",";
+    json += "\"bluetooth\":" + String(this->powerManager.isBluetoothEnabled() ? "true" : "false") + ",";
+    json += "\"ledHz\":" + String(this->powerManager.getLedUpdateHz()) + ",";
+    json += "\"estimatedCurrent\":" + String(this->powerManager.getEstimatedCurrentDraw(), 1) + ",";
+    json += "\"estimatedSavings\":" + String(this->powerManager.getEstimatedPowerSavings(), 1) + ",";
+    json += "\"actualCpuFreq\":" + String(getCpuFrequencyMhz());
+    json += "}";
+    this->server.send(200, "application/json", json);
+}
+
+void CaptivePortal::handlePowerSet() {
+    bool changed = false;
+    
+    if (this->server.hasArg("cpu_freq")) {
+        int freq = this->server.arg("cpu_freq").toInt();
+        if (freq == 80 || freq == 160 || freq == 240) {
+            this->powerManager.applyCpuFrequency((CpuFrequency)freq);
+            changed = true;
+        }
+    }
+    
+    if (this->server.hasArg("wifi_mode")) {
+        int mode = this->server.arg("wifi_mode").toInt();
+        if (mode >= 0 && mode <= 2) {
+            this->powerManager.applyWifiPowerMode((WifiPowerMode)mode);
+            changed = true;
+        }
+    }
+    
+    if (this->server.hasArg("bluetooth")) {
+        bool enabled = (this->server.arg("bluetooth") == "true" || this->server.arg("bluetooth") == "1");
+        this->powerManager.setBluetoothEnabled(enabled);
+        changed = true;
+    }
+    
+    if (this->server.hasArg("led_hz")) {
+        uint8_t hz = this->server.arg("led_hz").toInt();
+        if (hz == 30 || hz == 50 || hz == 100) {
+            this->powerManager.setLedUpdateHz(hz);
+            changed = true;
+        }
+    }
+    
+    if (changed) {
+        this->server.send(200, "application/json", "{\"success\":true,\"message\":\"Cau hinh tiet kiem nang luong da duoc cap nhat!\"}");
+    } else {
+        this->server.send(400, "application/json", "{\"success\":false,\"message\":\"Khong co tham so nao hop le!\"}");
+    }
+}

@@ -4,6 +4,7 @@
 #include "drivers/SHT31Sensor.h"
 #include "drivers/StressTester.h"
 #include "drivers/DataLogger.h"
+#include "drivers/PowerManager.h"
 #include "network/CaptivePortal.h"
 #include "network/StorageManager.h"
 #include "network/TelemetryService.h"
@@ -15,9 +16,10 @@ SHT31Sensor sensor;
 AlarmController alarmSystem(PIN_BUZZER, PIN_LED);
 RgbController rgbLed(PIN_RGB_LED);
 StorageManager storage;
+PowerManager powerManager;
 SensorSettings sensorSettings;
 WiFiService wifiService(storage);
-CaptivePortal portal(wifiService, storage, rgbLed, sensorSettings);
+CaptivePortal portal(wifiService, storage, rgbLed, sensorSettings, powerManager);
 TelemetryService telemetry(wifiService, storage);
 
 // Bien quan ly thoi gian (Non-blocking)
@@ -62,6 +64,7 @@ void setup() {
   }
 
   // 5. Khoi tao dich vu mang WiFi va Web Portal
+  powerManager.init();
   wifiService.init();
   portal.init();
   StressTester::getInstance().init();
