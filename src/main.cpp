@@ -10,6 +10,7 @@
 #include "network/TelemetryService.h"
 #include "network/WiFiService.h"
 #include <Arduino.h>
+#include <LittleFS.h>
 #include <math.h>
 
 // Khoi tao cac module
@@ -31,6 +32,44 @@ uint32_t lastLogTime = 0;
 float currentTemperature = 0.0f;
 float currentHumidity = 0.0f;
 bool hasValidData = false;
+
+// Khoi tao LittleFS tap trung voi co che bao ve Watchdog khi format
+static void initLittleFS() {
+  Serial.print("[LittleFS] Dang mount he thong tep Flash... ");
+  if (!LittleFS.begin(false)) {
+    Serial.println("\n[LittleFS] Phat hien phan vung LittleFS chua duoc dinh dang hoac bi loi (-84)!");
+    Serial.println("[LittleFS] Dang format lai Flash LittleFS (co the mat 5-10 giay, vui long cho)...");
+
+    // Vo hieu hoa watchdog tam thoi de tranh Task Watchdog reset chip trong khi format
+    disableLoopWDT();
+#ifndef CONFIG_FREERTOS_UNICORE
+    disableCore1WDT();
+#endif
+    disableCore0WDT();
+
+    bool formatOk = LittleFS.format();
+
+    enableCore0WDT();
+#ifndef CONFIG_FREERTOS_UNICORE
+    enableCore1WDT();
+#endif
+    enableLoopWDT();
+
+    if (formatOk && LittleFS.begin(false)) {
+      Serial.println("[LittleFS] Format va mount thanh cong!");
+      Serial.printf("[LittleFS] Dung luong tong: %u KB | Da dung: %u KB\n",
+                    (unsigned int)(LittleFS.totalBytes() / 1024),
+                    (unsigned int)(LittleFS.usedBytes() / 1024));
+    } else {
+      Serial.println("[LOI] Format hoac mount LittleFS that bai!");
+    }
+  } else {
+    Serial.println("OK.");
+    Serial.printf("[LittleFS] Dung luong tong: %u KB | Da dung: %u KB\n",
+                  (unsigned int)(LittleFS.totalBytes() / 1024),
+                  (unsigned int)(LittleFS.usedBytes() / 1024));
+  }
+}
 
 void setup() {
   Serial.begin(SERIAL_BAUD_RATE);
@@ -54,20 +93,24 @@ void setup() {
   storage.loadLedConfig(savedMode, savedR, savedG, savedB, savedBright, savedSpeed);
   rgbLed.applyConfig(savedMode, savedR, savedG, savedB, savedBright, savedSpeed);
 
-  // 3. Khoi tao DataLogger (Circular Ring Buffer 1440 diem & Flash LittleFS)
+  // 3. Khoi tao LittleFS Flash tap trung
+  initLittleFS();
+
+  // 4. Khoi tao DataLogger (Circular Ring Buffer 1440 diem & Flash LittleFS)
   DataLogger::getInstance().init();
 
-  // 4. Khoi tao cam bien SHT31
+  // 5. Khoi tao cam bien SHT31
   if (!sensor.init(PIN_SDA, PIN_SCL, SHT31_I2C_ADDR)) {
     Serial.println("[LOI] Khong tim thay cam bien SHT31! Vui long kiem tra day I2C (SDA=8, SCL=9).");
   } else {
     Serial.println("[OK] Cam bien SHT31 da san sang.");
   }
 
-  // 5. Khoi tao dich vu mang WiFi va Web Portal
+  // 6. Khoi tao dich vu mang WiFi va Web Portal
   powerManager.init();
   wifiService.init();
   portal.init();
+  telemetry.init();
   StressTester::getInstance().init();
 
   // 6. Khoi tao FreeRTOS Task tren Core 0 cho LED RGB (100 FPS muot tuyet doi)

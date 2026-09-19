@@ -31,12 +31,12 @@ void DataLogger::init() {
 
     memset(this->buffer, 0, sizeof(HistoryPoint) * MAX_POINTS);
 
-    // Khoi tao LittleFS Flash de luu snapshot
-    if (LittleFS.begin(true)) {
+    // Kiem tra LittleFS Flash de tai snapshot (da duoc mount tap trung tai setup)
+    if (LittleFS.begin(false)) {
         Serial.println("[DataLogger] LittleFS da san sang.");
         this->loadSnapshot();
     } else {
-        Serial.println("[LOI] Khong the khoi tao LittleFS!");
+        Serial.println("[LOI] LittleFS chua san sang cho DataLogger!");
     }
 
     this->lastSnapshotTime = millis();

@@ -52,6 +52,8 @@ public:
     TelemetryService(WiFiService &wifiService, StorageManager &storage);
     ~TelemetryService();
 
+    void init();
+
     // Gui du lieu telemetry chuan IIoT (ho tro Batch Ingestion & Flash LittleFS)
     void sendData(TelemetryPayload data);
 

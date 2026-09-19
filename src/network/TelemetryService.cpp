@@ -3,11 +3,13 @@
 #include <time.h>
 
 TelemetryService::TelemetryService(WiFiService &wifiService, StorageManager &storage)
-    : wifiService(wifiService), storage(storage), packetSeq(0), cachedDeviceId(""), littleFsMounted(false) {
-    
-    // Khoi tao phan vung Flash LittleFS ben vung
-    if (LittleFS.begin(true)) {
-        this->littleFsMounted = true;
+    : wifiService(wifiService), storage(storage), packetSeq(0), cachedDeviceId(""), littleFsMounted(false) {}
+
+TelemetryService::~TelemetryService() {}
+
+void TelemetryService::init() {
+    this->littleFsMounted = LittleFS.begin(false);
+    if (this->littleFsMounted) {
         size_t count = this->getFlashBacklogCount();
         if (count > 0) {
             Serial.printf("[Telemetry-Flash] Tim thay %u ban ghi offline ton dong tren Flash tu truoc!\n", (unsigned int)count);
@@ -15,11 +17,9 @@ TelemetryService::TelemetryService(WiFiService &wifiService, StorageManager &sto
             Serial.println("[Telemetry-Flash] LittleFS san sang (Chua co ban ghi offline nao).");
         }
     } else {
-        Serial.println("[Telemetry-Flash] LOI: Khong the mount LittleFS!");
+        Serial.println("[Telemetry-Flash] LOI: LittleFS chua duoc mount!");
     }
 }
-
-TelemetryService::~TelemetryService() {}
 
 String TelemetryService::getDeviceId() {
     if (this->cachedDeviceId.length() == 0) {
