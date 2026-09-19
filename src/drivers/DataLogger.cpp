@@ -88,12 +88,12 @@ void DataLogger::loop() {
     // Du lieu da duoc luu dong bo moi khi co diem do moi trong addPoint()
 }
 
-String DataLogger::getHistoryJson(uint8_t filterHours) {
+String DataLogger::getHistoryJson(uint16_t filterMinutes) {
     if (!this->buffer || this->count == 0) {
-        return "{\"count\":0,\"data\":[]}";
+        return "{\"count\":0,\"points\":[]}";
     }
 
-    uint16_t pointsToTake = filterHours * 60;
+    uint16_t pointsToTake = filterMinutes;
     if (pointsToTake > this->count || pointsToTake == 0) {
         pointsToTake = this->count;
     }

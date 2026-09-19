@@ -10,6 +10,7 @@
 #include "network/TelemetryService.h"
 #include "network/WiFiService.h"
 #include <Arduino.h>
+#include <math.h>
 
 // Khoi tao cac module
 SHT31Sensor sensor;
@@ -143,8 +144,32 @@ void loop() {
   if (currentMillis - lastTelemetryTime >= sensorSettings.sendIntervalSec * 1000) {
     lastTelemetryTime = currentMillis;
 
-    if (wifiService.isConnected() && hasValidData) {
-      telemetry.sendData(currentTemperature, currentHumidity);
+    if (hasValidData) {
+      TelemetryPayload payload;
+      payload.temperature = currentTemperature;
+      payload.humidity = currentHumidity;
+
+      float a = 17.27f;
+      float b = 237.7f;
+      float safeH = (currentHumidity > 1.0f) ? currentHumidity : 1.0f;
+      float alpha = ((a * currentTemperature) / (b + currentTemperature)) + logf(safeH / 100.0f);
+      payload.dewPoint = (b * alpha) / (a - alpha);
+
+      float vpSat = 0.61078f * expf((17.27f * currentTemperature) / (currentTemperature + 237.3f));
+      float vpd = vpSat * (1.0f - (currentHumidity / 100.0f));
+      payload.vpd = (vpd < 0.0f) ? 0.0f : vpd;
+
+      payload.chipTemp = StressTester::getInstance().getChipTemperature();
+      payload.cpuLoad = StressTester::getInstance().getCpuLoad();
+      payload.cpu0 = StressTester::getInstance().getCpuLoadCore0();
+      payload.cpu1 = StressTester::getInstance().getCpuLoadCore1();
+      payload.freeHeap = ESP.getFreeHeap();
+      payload.uptimeSec = currentMillis / 1000;
+      payload.wifiRssi = WiFi.RSSI();
+      payload.isAlert = (currentTemperature > sensorSettings.tempAlert || currentHumidity > sensorSettings.humAlert);
+      payload.sensorValid = hasValidData;
+
+      telemetry.sendData(payload);
     }
   }
 

@@ -54,7 +54,7 @@ void StorageManager::loadSensorSettings(float &tempAlert, float &humAlert, uint3
     tempAlert = this->prefs.isKey("cfg_t_alert") ? this->prefs.getFloat("cfg_t_alert", TEMP_ALERT_THRESHOLD) : TEMP_ALERT_THRESHOLD;
     humAlert = this->prefs.isKey("cfg_h_alert") ? this->prefs.getFloat("cfg_h_alert", HUM_ALERT_THRESHOLD) : HUM_ALERT_THRESHOLD;
     readIntervalSec = this->prefs.isKey("cfg_r_sec") ? this->prefs.getUInt("cfg_r_sec", 1) : 1;
-    sendIntervalSec = this->prefs.isKey("cfg_s_sec") ? this->prefs.getUInt("cfg_s_sec", 5) : 5;
+    sendIntervalSec = this->prefs.isKey("cfg_s_sec") ? this->prefs.getUInt("cfg_s_sec", 1) : 1;
     this->prefs.end();
 }
 

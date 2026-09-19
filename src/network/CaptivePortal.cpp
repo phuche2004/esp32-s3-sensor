@@ -40,26 +40,60 @@ void CaptivePortal::setupRoutes() {
     this->server.on("/api/reset-wifi", HTTP_POST, [this]() { this->handleResetWifi(); });
     this->server.on("/api/reset-wifi", HTTP_GET, [this]() { this->handleResetWifi(); });
 
-    // Cac endpoint dac thu de kich hoat popup Captive Portal tren Android / iOS / Windows
-    auto captiveRedirect = [this]() {
-        this->server.sendHeader("Location", "http://192.168.4.1/", true);
-        this->server.send(302, "text/plain", "");
-    };
-    this->server.on("/generate_204", HTTP_GET, captiveRedirect);
-    this->server.on("/hotspot-detect.html", HTTP_GET, captiveRedirect);
-    this->server.on("/canonical.html", HTTP_GET, captiveRedirect);
-    this->server.on("/connecttest.txt", HTTP_GET, captiveRedirect);
-    this->server.on("/redirect", HTTP_GET, captiveRedirect);
+    // 1. Tranh vong lap vo tan cho favicon
+    this->server.on("/favicon.ico", HTTP_GET, [this]() {
+        this->server.send(204);
+    });
 
-    this->server.onNotFound([this]() {
+    // 2. Ham chuyen huong tieu chuan tuong thich cao voi Samsung One UI, Apple CNA, Android
+    auto sendCaptiveRedirect = [this]() {
         this->server.sendHeader("Location", "http://192.168.4.1/", true);
-        this->server.send(302, "text/plain", "");
+        this->server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        this->server.sendHeader("Pragma", "no-cache");
+        this->server.sendHeader("Expires", "0");
+        this->server.send(302, "text/html", F("<!DOCTYPE html><html><head><meta charset='utf-8'>"
+            "<meta http-equiv='refresh' content='0;url=http://192.168.4.1/'>"
+            "<script>window.location.replace('http://192.168.4.1/');</script>"
+            "<title>Redirecting...</title></head>"
+            "<body><p>Dang chuyen huong...</p>"
+            "<p><a href='http://192.168.4.1/'>Nhan vao day neu khong tu dong chuyen</a></p></body></html>"));
+    };
+
+    // 3. Danh sach day du cac connectivity probe endpoints
+    // Android / Google / Samsung One UI
+    this->server.on("/generate_204", HTTP_GET, sendCaptiveRedirect);
+    this->server.on("/gen_204", HTTP_GET, sendCaptiveRedirect);
+    this->server.on("/ncsi.txt", HTTP_GET, sendCaptiveRedirect);
+    this->server.on("/mobile/status.go", HTTP_GET, sendCaptiveRedirect);
+    this->server.on("/check_network_status.txt", HTTP_GET, sendCaptiveRedirect);
+
+    // Apple iOS / macOS CNA
+    this->server.on("/hotspot-detect.html", HTTP_GET, sendCaptiveRedirect);
+    this->server.on("/library/test/success.html", HTTP_GET, sendCaptiveRedirect);
+    this->server.on("/success.txt", HTTP_GET, sendCaptiveRedirect);
+    this->server.on("/bag", HTTP_GET, sendCaptiveRedirect);
+
+    // Microsoft Windows
+    this->server.on("/connecttest.txt", HTTP_GET, sendCaptiveRedirect);
+    this->server.on("/redirect", HTTP_GET, sendCaptiveRedirect);
+    this->server.on("/canonical.html", HTTP_GET, sendCaptiveRedirect);
+
+    // 4. Bat moi request chua xu ly (Catch-all)
+    this->server.onNotFound([this, sendCaptiveRedirect]() {
+        if (this->server.uri().indexOf("favicon") >= 0) {
+            this->server.send(204);
+            return;
+        }
+        sendCaptiveRedirect();
     });
 }
 
 void CaptivePortal::loop() {
     if (this->active) {
-        this->dnsServer.processNextRequest();
+        // Xu ly nhanh nhieu goi tin DNS trong hang doi UDP de tranh timeout khi thiet bi gui song song
+        for (uint8_t i = 0; i < 4; i++) {
+            this->dnsServer.processNextRequest();
+        }
         this->server.handleClient();
     }
 }
@@ -136,7 +170,7 @@ void CaptivePortal::handleSensorConfigSet() {
         this->sensorSettings.tempAlert = TEMP_ALERT_THRESHOLD;
         this->sensorSettings.humAlert = HUM_ALERT_THRESHOLD;
         this->sensorSettings.readIntervalSec = 1;
-        this->sensorSettings.sendIntervalSec = 5;
+        this->sensorSettings.sendIntervalSec = 1;
         this->storage.saveSensorSettings(this->sensorSettings.tempAlert, this->sensorSettings.humAlert,
                                          this->sensorSettings.readIntervalSec, this->sensorSettings.sendIntervalSec);
         Serial.println("[Sensor] Da khoi phuc cau hinh cam bien ve mac dinh!");
@@ -158,7 +192,7 @@ void CaptivePortal::handleSensorConfigSet() {
     }
     if (this->server.hasArg("send_interval")) {
         uint32_t s = this->server.arg("send_interval").toInt();
-        if (s < 2) s = 2;
+        if (s < 1) s = 1;
         if (s > 300) s = 300;
         this->sensorSettings.sendIntervalSec = s;
     }
@@ -323,14 +357,28 @@ void CaptivePortal::handleStressTest() {
 }
 
 void CaptivePortal::handleHistoryGet() {
-    uint8_t hours = 24;
-    if (this->server.hasArg("hours")) {
-        int h = this->server.arg("hours").toInt();
-        if (h > 0 && h <= 24) {
-            hours = (uint8_t)h;
+    if (this->server.hasArg("epoch")) {
+        uint32_t epoch = (uint32_t)this->server.arg("epoch").toInt();
+        if (epoch > 1000000000) {
+            struct timeval tv = { (time_t)epoch, 0 };
+            settimeofday(&tv, NULL);
+            DataLogger::getInstance().syncEpoch(epoch);
         }
     }
-    String json = DataLogger::getInstance().getHistoryJson(hours);
+
+    uint16_t filterMins = 1440; // Mac dinh 24h
+    if (this->server.hasArg("mins")) {
+        int m = this->server.arg("mins").toInt();
+        if (m >= 0 && m <= 1440) {
+            filterMins = (uint16_t)m;
+        }
+    } else if (this->server.hasArg("hours")) {
+        int h = this->server.arg("hours").toInt();
+        if (h > 0 && h <= 24) {
+            filterMins = (uint16_t)(h * 60);
+        }
+    }
+    String json = DataLogger::getInstance().getHistoryJson(filterMins);
     this->server.sendHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     this->server.send(200, "application/json", json);
 }

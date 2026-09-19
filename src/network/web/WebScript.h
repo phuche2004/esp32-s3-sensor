@@ -887,8 +887,8 @@ function saveSensorSettings() {
         alert('Chu kỳ đọc phải từ 1 đến 60 giây!');
         return;
     }
-    if (isNaN(s) || s < 2 || s > 300) {
-        alert('Chu kỳ gửi phải từ 2 đến 300 giây!');
+    if (isNaN(s) || s < 1 || s > 300) {
+        alert('Chu kỳ gửi phải từ 1 đến 300 giây!');
         return;
     }
 
@@ -1021,18 +1021,20 @@ function toggleStressTest() {
 // ==========================================
 // TAB 4: BIỂU ĐỒ LỊCH SỬ ĐO SHT31
 // ==========================================
-var currentChartHours = 24;
+var currentChartMins = 1440;
 var cachedChartPoints = [];
 var chartRenderedCoords = [];
 
-function setChartFilter(hours) {
-    currentChartHours = hours;
-    var b24 = document.getElementById('filterBtn24');
-    var b6 = document.getElementById('filterBtn6');
-    var b1 = document.getElementById('filterBtn1');
-    if (b24) b24.className = (hours === 24) ? 'btn-filter active' : 'btn-filter';
-    if (b6) b6.className = (hours === 6) ? 'btn-filter active' : 'btn-filter';
-    if (b1) b1.className = (hours === 1) ? 'btn-filter active' : 'btn-filter';
+function setChartFilter(mins) {
+    currentChartMins = mins;
+    var ids = ['filterBtn15m', 'filterBtn1h', 'filterBtn3h', 'filterBtn6h', 'filterBtn12h', 'filterBtn24h', 'filterBtnAll'];
+    var mapMins = [15, 60, 180, 360, 720, 1440, 0];
+    for (var i = 0; i < ids.length; i++) {
+        var el = document.getElementById(ids[i]);
+        if (el) {
+            el.className = (mins === mapMins[i]) ? 'btn-filter active' : 'btn-filter';
+        }
+    }
     loadHistoryChart();
 }
 
@@ -1059,7 +1061,9 @@ function formatChartTime(ts, isEpoch, detail) {
     var mm = ('0' + d.getMinutes()).slice(-2);
     if (detail) {
         var ss = ('0' + d.getSeconds()).slice(-2);
-        return hh + ':' + mm + ':' + ss;
+        var dd = ('0' + d.getDate()).slice(-2);
+        var mo = ('0' + (d.getMonth() + 1)).slice(-2);
+        return dd + '/' + mo + ' ' + hh + ':' + mm + ':' + ss;
     }
     return hh + ':' + mm;
 }
@@ -1068,11 +1072,46 @@ function loadHistoryChart() {
     var countEl = document.getElementById('chartDataCount');
     if (countEl) countEl.innerText = 'Đang tải...';
 
-    fetch('/api/history?hours=' + currentChartHours)
+    var clientEpoch = Math.floor(Date.now() / 1000);
+    fetch('/api/history?mins=' + currentChartMins + '&epoch=' + clientEpoch)
         .then(function(res) { return res.json(); })
         .then(function(data) {
-            cachedChartPoints = (data && (data.points || data.data)) ? (data.points || data.data) : [];
+            var raw = (data && (data.points || data.data)) ? (data.points || data.data) : [];
             
+            var valid = [];
+            for (var i = 0; i < raw.length; i++) {
+                var p = raw[i];
+                if (p && p.length >= 3 && !isNaN(p[0]) && !isNaN(p[1]) && !isNaN(p[2])) {
+                    valid.push([Number(p[0]), Number(p[1]), Number(p[2])]);
+                }
+            }
+
+            // Dong nhat he quy chieu thoi gian neu ton tai ca uptime va unix epoch
+            var hasEpoch = valid.some(function(p) { return p[0] > 1000000000; });
+            if (hasEpoch) {
+                var maxEpoch = 0;
+                for (var i = 0; i < valid.length; i++) {
+                    if (valid[i][0] > 1000000000 && valid[i][0] > maxEpoch) maxEpoch = valid[i][0];
+                }
+                for (var i = 0; i < valid.length; i++) {
+                    if (valid[i][0] < 1000000000) {
+                        valid[i][0] = maxEpoch - (valid.length - 1 - i) * 60;
+                    }
+                }
+            }
+
+            // Sap xep tang dan de loai bo hien tuong ve giat nguoc
+            valid.sort(function(a, b) { return a[0] - b[0]; });
+
+            // Loc theo so phut can xem neu chon bo loc cu the
+            if (currentChartMins > 0 && valid.length > 0) {
+                var latestTime = valid[valid.length - 1][0];
+                var startTime = latestTime - (currentChartMins * 60);
+                valid = valid.filter(function(p) { return p[0] >= startTime; });
+            }
+
+            cachedChartPoints = valid;
+
             var countText = cachedChartPoints.length + ' mẫu';
             if (cachedChartPoints.length > 0) {
                 var minT = cachedChartPoints[0][0];
@@ -1098,7 +1137,7 @@ function loadHistoryChart() {
                 if (tMax) tMax.innerText = '--.-';
                 if (hMin) hMin.innerText = '--.-';
                 if (hMax) hMax.innerText = '--.-';
-                renderEmptyChart('Chưa có điểm dữ liệu trong ' + currentChartHours + 'h qua');
+                renderEmptyChart('Chưa có dữ liệu trong khoảng thời gian này');
                 return;
             }
 
@@ -1179,7 +1218,7 @@ function renderHistoryCanvas(points, minT, maxT, minH, maxH, highlightIdx) {
     var scaleMaxH = Math.min(100, Math.ceil(maxH + 3));
     if (scaleMaxH - scaleMinH < 8) scaleMaxH = scaleMinH + 8;
 
-    // Ve luoi ngang (Grid lines)
+    // Luoi ngang (Grid lines)
     var gridSteps = 4;
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
     ctx.lineWidth = 1;
@@ -1205,7 +1244,7 @@ function renderHistoryCanvas(points, minT, maxT, minH, maxH, highlightIdx) {
         ctx.fillText(Math.round(hVal) + '%', padL + plotW + 5, gy);
     }
 
-    // Vung nen canh bao nhiet do: do nhat khi > 36°C, xanh nhat khi < 31°C
+    // Vung nen canh bao nhiet do
     var TEMP_HIGH = 36.0;
     var TEMP_LOW  = 31.0;
     var tRange = scaleMaxT - scaleMinT;
@@ -1213,14 +1252,12 @@ function renderHistoryCanvas(points, minT, maxT, minH, maxH, highlightIdx) {
     ctx.beginPath();
     ctx.rect(padL, padT, plotW, plotH);
     ctx.clip();
-    // Vung nong (> TEMP_HIGH): to do nhat tu nguong len den dinh
     if (scaleMaxT > TEMP_HIGH) {
         var yHigh = padT + plotH - ((TEMP_HIGH - scaleMinT) / tRange) * plotH;
         yHigh = Math.max(padT, yHigh);
         ctx.fillStyle = 'rgba(239, 68, 68, 0.10)';
         ctx.fillRect(padL, padT, plotW, yHigh - padT);
     }
-    // Vung lanh (< TEMP_LOW): to xanh duong nhat tu nguong xuong day
     if (scaleMinT < TEMP_LOW) {
         var yLow = padT + plotH - ((TEMP_LOW - scaleMinT) / tRange) * plotH;
         yLow = Math.min(padT + plotH, yLow);
@@ -1257,57 +1294,109 @@ function renderHistoryCanvas(points, minT, maxT, minH, maxH, highlightIdx) {
         chartRenderedCoords.push({ x: x, yT: yT, yH: yH, pt: pt });
     }
 
-    // 1. Ve vung phu gradient Do Am (Xanh Cyan)
+    // Tach thanh cac doan lien tuc, ngat net khi co gap > 300s de khong ke cheo khi mat nguon
+    var GAP_THRESHOLD = 300;
+    var segments = [];
+    var curSeg = [];
+    for (var i = 0; i < chartRenderedCoords.length; i++) {
+        var c = chartRenderedCoords[i];
+        if (curSeg.length === 0) {
+            curSeg.push(c);
+        } else {
+            var prevC = curSeg[curSeg.length - 1];
+            if ((c.pt[0] - prevC.pt[0]) > GAP_THRESHOLD) {
+                segments.push(curSeg);
+                curSeg = [c];
+            } else {
+                curSeg.push(c);
+            }
+        }
+    }
+    if (curSeg.length > 0) {
+        segments.push(curSeg);
+    }
+
+    // 1. Ve vung phu gradient Do Am theo tung segment
     var gradH = ctx.createLinearGradient(0, padT, 0, padT + plotH);
     gradH.addColorStop(0, 'rgba(56, 189, 248, 0.22)');
     gradH.addColorStop(1, 'rgba(56, 189, 248, 0.00)');
-    ctx.beginPath();
-    ctx.moveTo(chartRenderedCoords[0].x, padT + plotH);
-    for (var i = 0; i < chartRenderedCoords.length; i++) {
-        ctx.lineTo(chartRenderedCoords[i].x, chartRenderedCoords[i].yH);
+    for (var s = 0; s < segments.length; s++) {
+        var seg = segments[s];
+        if (seg.length >= 2) {
+            ctx.beginPath();
+            ctx.moveTo(seg[0].x, padT + plotH);
+            for (var j = 0; j < seg.length; j++) {
+                ctx.lineTo(seg[j].x, seg[j].yH);
+            }
+            ctx.lineTo(seg[seg.length - 1].x, padT + plotH);
+            ctx.closePath();
+            ctx.fillStyle = gradH;
+            ctx.fill();
+        }
     }
-    ctx.lineTo(chartRenderedCoords[chartRenderedCoords.length - 1].x, padT + plotH);
-    ctx.closePath();
-    ctx.fillStyle = gradH;
-    ctx.fill();
 
-    // 2. Ve duong Do Am
-    ctx.beginPath();
+    // 2. Ve duong Do Am theo tung segment
     ctx.strokeStyle = '#38bdf8';
     ctx.lineWidth = 2;
     ctx.lineJoin = 'round';
-    for (var i = 0; i < chartRenderedCoords.length; i++) {
-        if (i === 0) ctx.moveTo(chartRenderedCoords[i].x, chartRenderedCoords[i].yH);
-        else ctx.lineTo(chartRenderedCoords[i].x, chartRenderedCoords[i].yH);
+    for (var s = 0; s < segments.length; s++) {
+        var seg = segments[s];
+        if (seg.length >= 2) {
+            ctx.beginPath();
+            ctx.moveTo(seg[0].x, seg[0].yH);
+            for (var j = 1; j < seg.length; j++) {
+                ctx.lineTo(seg[j].x, seg[j].yH);
+            }
+            ctx.stroke();
+        } else if (seg.length === 1) {
+            ctx.beginPath();
+            ctx.arc(seg[0].x, seg[0].yH, 2.5, 0, Math.PI * 2);
+            ctx.fillStyle = '#38bdf8';
+            ctx.fill();
+        }
     }
-    ctx.stroke();
 
-    // 3. Ve vung phu gradient Nhiet Do (Do Hong)
+    // 3. Ve vung phu gradient Nhiet Do theo tung segment
     var gradT = ctx.createLinearGradient(0, padT, 0, padT + plotH);
     gradT.addColorStop(0, 'rgba(244, 63, 94, 0.25)');
     gradT.addColorStop(1, 'rgba(244, 63, 94, 0.00)');
-    ctx.beginPath();
-    ctx.moveTo(chartRenderedCoords[0].x, padT + plotH);
-    for (var i = 0; i < chartRenderedCoords.length; i++) {
-        ctx.lineTo(chartRenderedCoords[i].x, chartRenderedCoords[i].yT);
+    for (var s = 0; s < segments.length; s++) {
+        var seg = segments[s];
+        if (seg.length >= 2) {
+            ctx.beginPath();
+            ctx.moveTo(seg[0].x, padT + plotH);
+            for (var j = 0; j < seg.length; j++) {
+                ctx.lineTo(seg[j].x, seg[j].yT);
+            }
+            ctx.lineTo(seg[seg.length - 1].x, padT + plotH);
+            ctx.closePath();
+            ctx.fillStyle = gradT;
+            ctx.fill();
+        }
     }
-    ctx.lineTo(chartRenderedCoords[chartRenderedCoords.length - 1].x, padT + plotH);
-    ctx.closePath();
-    ctx.fillStyle = gradT;
-    ctx.fill();
 
-    // 4. Ve duong Nhiet Do
-    ctx.beginPath();
+    // 4. Ve duong Nhiet Do theo tung segment
     ctx.strokeStyle = '#f43f5e';
     ctx.lineWidth = 2;
     ctx.lineJoin = 'round';
-    for (var i = 0; i < chartRenderedCoords.length; i++) {
-        if (i === 0) ctx.moveTo(chartRenderedCoords[i].x, chartRenderedCoords[i].yT);
-        else ctx.lineTo(chartRenderedCoords[i].x, chartRenderedCoords[i].yT);
+    for (var s = 0; s < segments.length; s++) {
+        var seg = segments[s];
+        if (seg.length >= 2) {
+            ctx.beginPath();
+            ctx.moveTo(seg[0].x, seg[0].yT);
+            for (var j = 1; j < seg.length; j++) {
+                ctx.lineTo(seg[j].x, seg[j].yT);
+            }
+            ctx.stroke();
+        } else if (seg.length === 1) {
+            ctx.beginPath();
+            ctx.arc(seg[0].x, seg[0].yT, 2.5, 0, Math.PI * 2);
+            ctx.fillStyle = '#f43f5e';
+            ctx.fill();
+        }
     }
-    ctx.stroke();
 
-    // 5. Nhan thoi gian truc X duoi cung
+    // 5. Nhan thoi gian truc X
     ctx.fillStyle = '#64748b';
     ctx.font = '10px system-ui, sans-serif';
     ctx.textAlign = 'left';
@@ -1324,7 +1413,6 @@ function renderHistoryCanvas(points, minT, maxT, minH, maxH, highlightIdx) {
     if (highlightIdx >= 0 && highlightIdx < chartRenderedCoords.length) {
         var hp = chartRenderedCoords[highlightIdx];
 
-        // Duong thang dung crosshair
         ctx.beginPath();
         ctx.setLineDash([3, 3]);
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
@@ -1334,7 +1422,6 @@ function renderHistoryCanvas(points, minT, maxT, minH, maxH, highlightIdx) {
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // Cham Nhiet do
         ctx.fillStyle = '#f43f5e';
         ctx.strokeStyle = '#fff';
         ctx.lineWidth = 2;
@@ -1343,7 +1430,6 @@ function renderHistoryCanvas(points, minT, maxT, minH, maxH, highlightIdx) {
         ctx.fill();
         ctx.stroke();
 
-        // Cham Do am
         ctx.fillStyle = '#38bdf8';
         ctx.beginPath();
         ctx.arc(hp.x, hp.yH, 5, 0, Math.PI * 2);
@@ -1376,11 +1462,10 @@ function handleChartHover(clientX, clientY) {
     var isEpoch = (match.pt[0] > 1000000000);
     var timeStr = formatChartTime(match.pt[0], isEpoch, true);
 
-    tooltip.innerHTML = '<div style="font-weight:700; color:#cbd5e1; margin-bottom:3px;">⏱ ' + timeStr + '</div>' +
-        '<div style="color:#f43f5e; font-weight:700;">🌡 Nhiệt độ: ' + match.pt[1].toFixed(1) + ' °C</div>' +
-        '<div style="color:#38bdf8; font-weight:700;">💧 Độ ẩm: ' + match.pt[2].toFixed(1) + ' %</div>';
+    tooltip.innerHTML = '<div style="font-weight:700; color:#cbd5e1; margin-bottom:3px;">Thời gian: ' + timeStr + '</div>' +
+        '<div style="color:#f43f5e; font-weight:700;">Nhiệt độ: ' + match.pt[1].toFixed(1) + ' °C</div>' +
+        '<div style="color:#38bdf8; font-weight:700;">Độ ẩm: ' + match.pt[2].toFixed(1) + ' %</div>';
 
-    // Hien thi truoc de tinh kich thuoc
     tooltip.style.display = 'block';
     tooltip.style.visibility = 'hidden';
     
@@ -1389,24 +1474,18 @@ function handleChartHover(clientX, clientY) {
     var canvasW = rect.width;
     var canvasH = rect.height;
     
-    // Lay vi tri dot thap nhat (dot nao cao hon tren man hinh)
     var dotTopY = Math.min(match.yT, match.yH);
-    
-    // Mac dinh: dat tooltip phia tren dot, canh giua
     var tipLeft = match.x - tw / 2;
     var tipTop  = dotTopY - th - 12;
     
-    // Neu tooltip vuot ra ngoai tren canvas, lat xuong duoi
     if (tipTop < 0) {
         var dotBottomY = Math.max(match.yT, match.yH);
         tipTop = dotBottomY + 12;
     }
     
-    // Clamp ngang de khong bi cat
     if (tipLeft < 4) tipLeft = 4;
     if (tipLeft + tw > canvasW - 4) tipLeft = canvasW - tw - 4;
     
-    // Clamp doc
     if (tipTop + th > canvasH - 4) tipTop = canvasH - th - 4;
     if (tipTop < 4) tipTop = 4;
     

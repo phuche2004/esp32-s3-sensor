@@ -1,6 +1,7 @@
 #include "WiFiService.h"
 #include "Config.h"
 #include <ESPmDNS.h>
+#include <time.h>
 
 WiFiService::WiFiService(StorageManager &storage)
     : storage(storage), state(WIFI_IDLE), connectResult(RESULT_IDLE), lastError(""),
@@ -129,6 +130,10 @@ void WiFiService::loop() {
             } else {
                 Serial.println("[mDNS] Loi khoi tao mDNS!");
             }
+
+            // Dong bo thoi gian thuc UTC+7 qua Internet (NTP)
+            configTime(7 * 3600, 0, "pool.ntp.org", "time.google.com");
+            Serial.println("[NTP] Da khoi tao dong bo thoi gian tu pool.ntp.org");
             
             // Chi luu vao bo nho Flash NVS khi da chac chan ket noi duoc!
             this->storage.saveCredentials(this->currentSSID, this->currentPass, this->currentUser, this->currentIsEnterprise, this->currentBackendUrl);

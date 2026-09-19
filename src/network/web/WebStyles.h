@@ -1013,26 +1013,36 @@ input:checked + .slider:before { transform: translateX(20px); }
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 6px;
     margin-bottom: 12px;
 }
 .chart-filter-group {
     display: flex;
-    gap: 4px;
+    gap: 3px;
     background: rgba(13, 9, 26, 0.8);
     padding: 3px;
     border-radius: 999px;
     border: 1px solid rgba(255, 255, 255, 0.1);
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    max-width: calc(100% - 70px);
+}
+.chart-filter-group::-webkit-scrollbar {
+    display: none;
 }
 .btn-filter {
     background: transparent;
     border: none;
     color: #94a3b8;
-    padding: 5px 12px;
+    padding: 5px 9px;
     border-radius: 999px;
     font-size: 11px;
     font-weight: 700;
     cursor: pointer;
     transition: all 0.2s ease;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 .btn-filter.active {
     background: #38bdf8;
@@ -1042,16 +1052,17 @@ input:checked + .slider:before { transform: translateX(20px); }
 .btn-export-csv {
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 4px;
     background: rgba(56, 189, 248, 0.12);
     border: 1px solid rgba(56, 189, 248, 0.35);
     color: #38bdf8;
-    padding: 6px 12px;
+    padding: 6px 10px;
     border-radius: 10px;
-    font-size: 11.5px;
+    font-size: 11px;
     font-weight: 700;
     cursor: pointer;
     transition: all 0.2s ease;
+    flex-shrink: 0;
 }
 .btn-export-csv:hover {
     background: rgba(56, 189, 248, 0.25);

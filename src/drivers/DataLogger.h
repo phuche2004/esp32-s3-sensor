@@ -27,8 +27,8 @@ public:
     void syncEpoch(uint32_t currentEpoch);
 
     // Xuat lich su ra chuoi JSON phuc vu ve bieu do tren Web
-    // filterHours: 1 (1h qua), 6 (6h qua), 24 (toan bo 24h)
-    String getHistoryJson(uint8_t filterHours = 24);
+    // filterMinutes: 15 (15m), 60 (1h), 180 (3h), 360 (6h), 720 (12h), 1440 (24h), 0 (Toan bo)
+    String getHistoryJson(uint16_t filterMinutes = 1440);
 
     // Xuat ra dinh dang CSV de nguoi dung tai file ve may
     String getCsvString();

@@ -27,7 +27,7 @@ constexpr float HUM_ALERT_THRESHOLD  = 87.0f; // Do am vuot 87 % -> canh bao
 // CHU KY HOAT DONG (TIMING)
 // ==========================================
 constexpr uint32_t SENSOR_READ_INTERVAL_MS = 1000; // Doc moi 1 giay (non-blocking)
-constexpr uint32_t TELEMETRY_INTERVAL_MS   = 5000; // Ban du lieu len backend moi 5 giay
+constexpr uint32_t TELEMETRY_INTERVAL_MS   = 1000; // Ban du lieu len backend moi 1 giay
 constexpr uint32_t SERIAL_BAUD_RATE        = 115200;
 
 // ==========================================
@@ -37,7 +37,7 @@ struct SensorSettings {
     float tempAlert = TEMP_ALERT_THRESHOLD;
     float humAlert = HUM_ALERT_THRESHOLD;
     uint32_t readIntervalSec = 1;
-    uint32_t sendIntervalSec = 5;
+    uint32_t sendIntervalSec = 1;
 };
 
 // ==========================================
