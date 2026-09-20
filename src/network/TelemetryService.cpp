@@ -1,13 +1,30 @@
 #include "TelemetryService.h"
 #include <WiFi.h>
 #include <time.h>
+#include <sys/time.h>
 
 TelemetryService::TelemetryService(WiFiService &wifiService, StorageManager &storage)
-    : wifiService(wifiService), storage(storage), packetSeq(0), cachedDeviceId(""), littleFsMounted(false) {}
+    : wifiService(wifiService), storage(storage), packetSeq(0), cachedDeviceId(""),
+      littleFsMounted(false), telemetryQueue(nullptr), telemetryTaskHandle(nullptr),
+      psramBuffer(nullptr), psramCount(0), psramAvailable(false) {}
 
-TelemetryService::~TelemetryService() {}
+TelemetryService::~TelemetryService() {
+    if (this->telemetryTaskHandle != nullptr) {
+        vTaskDelete(this->telemetryTaskHandle);
+        this->telemetryTaskHandle = nullptr;
+    }
+    if (this->telemetryQueue != nullptr) {
+        vQueueDelete(this->telemetryQueue);
+        this->telemetryQueue = nullptr;
+    }
+    if (this->psramBuffer != nullptr) {
+        free(this->psramBuffer);
+        this->psramBuffer = nullptr;
+    }
+}
 
 void TelemetryService::init() {
+    // 1. Khoi tao LittleFS Flash
     this->littleFsMounted = LittleFS.begin(false);
     if (this->littleFsMounted) {
         size_t count = this->getFlashBacklogCount();
@@ -19,6 +36,94 @@ void TelemetryService::init() {
     } else {
         Serial.println("[Telemetry-Flash] LOI: LittleFS chua duoc mount!");
     }
+
+    // 2. Cap phat bo dem PSRAM/RAM de chong mon Flash LittleFS
+#if defined(BOARD_HAS_PSRAM)
+    if (psramFound()) {
+        this->psramBuffer = (TelemetryRecord *)ps_malloc(sizeof(TelemetryRecord) * PSRAM_BUFFER_CAPACITY);
+        if (this->psramBuffer) {
+            this->psramAvailable = true;
+            Serial.printf("[Telemetry-PSRAM] Da cap phat Circular Buffer %u mau (%u bytes) tren PSRAM chong mon Flash!\n",
+                          (unsigned int)PSRAM_BUFFER_CAPACITY,
+                          (unsigned int)(sizeof(TelemetryRecord) * PSRAM_BUFFER_CAPACITY));
+        }
+    }
+#endif
+    if (!this->psramBuffer) {
+        this->psramBuffer = (TelemetryRecord *)malloc(sizeof(TelemetryRecord) * PSRAM_BUFFER_CAPACITY);
+        if (this->psramBuffer) {
+            Serial.printf("[Telemetry-RAM] Da cap phat bo dem SRAM %u mau (%u bytes) cho Telemetry.\n",
+                          (unsigned int)PSRAM_BUFFER_CAPACITY,
+                          (unsigned int)(sizeof(TelemetryRecord) * PSRAM_BUFFER_CAPACITY));
+        } else {
+            Serial.println("[Telemetry] CANH BAO: Khong the cap phat bo dem RAM/PSRAM!");
+        }
+    }
+    this->psramCount = 0;
+
+    // 3. Khoi tao FreeRTOS Queue va Task doc lap tren Core 0
+    this->telemetryQueue = xQueueCreate(16, sizeof(TelemetryPayload));
+    if (this->telemetryQueue) {
+        BaseType_t taskCreated = xTaskCreatePinnedToCore(
+            TelemetryService::telemetryTaskStatic,
+            "TelemetryTask",
+            8192,
+            this,
+            1,
+            &this->telemetryTaskHandle,
+            0 // Ghim doc lap tren Core 0 cung voi Wi-Fi stack
+        );
+        if (taskCreated == pdPASS) {
+            Serial.println("[Telemetry-RTOS] Task Telemetry da khoi tao va ghim vao Core 0 (Stack: 8192B, Priority: 1).");
+        } else {
+            Serial.println("[Telemetry-RTOS] LOI: Khong the tao TelemetryTask!");
+        }
+    } else {
+        Serial.println("[Telemetry-RTOS] LOI: Khong the tao Telemetry Queue!");
+    }
+}
+
+void TelemetryService::telemetryTaskStatic(void *pvParameters) {
+    TelemetryService *service = static_cast<TelemetryService *>(pvParameters);
+    service->telemetryTaskLoop();
+}
+
+void TelemetryService::telemetryTaskLoop() {
+    TelemetryPayload payload;
+    while (true) {
+        if (xQueueReceive(this->telemetryQueue, &payload, pdMS_TO_TICKS(100)) == pdTRUE) {
+            this->processPayloadInternal(payload);
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
+bool TelemetryService::pushPayload(const TelemetryPayload &data) {
+    if (!this->telemetryQueue) {
+        return false;
+    }
+    // Day vao Queue khong chan (timeout = 0) de loop() tren Core 1 khong bao gio bi block
+    BaseType_t res = xQueueSend(this->telemetryQueue, &data, 0);
+    if (res != pdTRUE) {
+        Serial.println("[Telemetry-Queue] Canh bao: Queue telemetry bi day, bo qua goi tin!");
+        return false;
+    }
+    return true;
+}
+
+void TelemetryService::sendData(TelemetryPayload data) {
+    this->pushPayload(data);
+}
+
+void TelemetryService::sendData(float temperature, float humidity) {
+    TelemetryPayload payload;
+    payload.temperature = temperature;
+    payload.humidity = humidity;
+    payload.sensorValid = true;
+    payload.uptimeSec = millis() / 1000;
+    payload.freeHeap = ESP.getFreeHeap();
+    payload.wifiRssi = WiFi.RSSI();
+    this->pushPayload(payload);
 }
 
 String TelemetryService::getDeviceId() {
@@ -48,6 +153,10 @@ size_t TelemetryService::getFlashBacklogCount() {
     return count;
 }
 
+size_t TelemetryService::getPsramBufferCount() const {
+    return this->psramCount;
+}
+
 void TelemetryService::pruneOldRecordsFromFlash(size_t recordsToRemove) {
     if (!this->littleFsMounted || !LittleFS.exists(OFFLINE_FILE)) return;
 
@@ -62,7 +171,6 @@ void TelemetryService::pruneOldRecordsFromFlash(size_t recordsToRemove) {
         return;
     }
 
-    // Bo qua recordsToRemove ban ghi cu nhat o dau file theo dung nguyen ly FIFO
     f.seek(recordsToRemove * sizeof(TelemetryRecord), SeekSet);
 
     const char* TEMP_FILE = "/telemetry_fifo.bin";
@@ -77,7 +185,7 @@ void TelemetryService::pruneOldRecordsFromFlash(size_t recordsToRemove) {
         f.close();
         LittleFS.remove(OFFLINE_FILE);
         LittleFS.rename(TEMP_FILE, OFFLINE_FILE);
-        Serial.printf("[Telemetry-FIFO] Da cat bo %u ban ghi cu nhat (Duy tri dung luong Flash luon an toan, khong bao gio tran)!\n",
+        Serial.printf("[Telemetry-FIFO] Da cat bo %u ban ghi cu nhat (Duy tri dung luong Flash luon an toan)!\n",
                       (unsigned int)recordsToRemove);
     } else {
         f.close();
@@ -87,8 +195,6 @@ void TelemetryService::pruneOldRecordsFromFlash(size_t recordsToRemove) {
 bool TelemetryService::appendRecordToFlash(const TelemetryRecord &rec) {
     if (!this->littleFsMounted) return false;
 
-    // Co che FIFO: Kiem tra neu vuot nguong MAX_OFFLINE_RECORDS (3600 mau = 1 gio @ 1s)
-    // hoac dung luong Flash con trong duoi 300KB thi cat bo 100 ban ghi cu nhat o dau file
     size_t currentCount = this->getFlashBacklogCount();
     size_t freeBytes = LittleFS.totalBytes() - LittleFS.usedBytes();
 
@@ -106,15 +212,86 @@ bool TelemetryService::appendRecordToFlash(const TelemetryRecord &rec) {
     return (written == sizeof(TelemetryRecord));
 }
 
-bool TelemetryService::sendHttpPayload(const String &payload, const String &backendUrl, bool isBatch, size_t count, uint32_t seq) {
+bool TelemetryService::flushPsramToFlash() {
+    if (!this->littleFsMounted || !this->psramBuffer || this->psramCount == 0) {
+        return false;
+    }
+
+    size_t currentCount = this->getFlashBacklogCount();
+    size_t freeBytes = LittleFS.totalBytes() - LittleFS.usedBytes();
+    if (currentCount + this->psramCount > MAX_OFFLINE_RECORDS || freeBytes < 300000) {
+        this->pruneOldRecordsFromFlash(this->psramCount + 50);
+    }
+
+    File f = LittleFS.open(OFFLINE_FILE, "ab");
+    if (!f) {
+        Serial.println("[Telemetry-Flash] LOI: Khong the mo file Flash de flush buffer!");
+        return false;
+    }
+
+    size_t bytesToWrite = this->psramCount * sizeof(TelemetryRecord);
+    size_t written = f.write((const uint8_t *)this->psramBuffer, bytesToWrite);
+    f.close();
+
+    bool ok = (written == bytesToWrite);
+    if (ok) {
+        Serial.printf("[Telemetry-PSRAM] Da flush %u mau tu PSRAM xuong Flash LittleFS (1 lan ghi duy nhat)!\n",
+                      (unsigned int)this->psramCount);
+        this->psramCount = 0;
+    } else {
+        Serial.println("[Telemetry-Flash] LOI: Ghi PSRAM buffer vao Flash khong tron ven!");
+    }
+    return ok;
+}
+
+bool TelemetryService::appendRecordToBuffer(const TelemetryRecord &rec) {
+    if (!this->psramBuffer) {
+        return this->appendRecordToFlash(rec);
+    }
+
+    if (this->psramCount < PSRAM_BUFFER_CAPACITY) {
+        this->psramBuffer[this->psramCount++] = rec;
+    }
+
+    // Gom du PSRAM_BUFFER_CAPACITY mau thi flush 1 lan xuong Flash LittleFS
+    if (this->psramCount >= PSRAM_BUFFER_CAPACITY) {
+        return this->flushPsramToFlash();
+    }
+    return true;
+}
+
+void TelemetryService::syncTimeFromServer(const String &responseBody) {
+    if (responseBody.length() == 0) return;
+    int idx = responseBody.indexOf("\"server_time\"");
+    if (idx == -1) return;
+    int colon = responseBody.indexOf(':', idx);
+    if (colon == -1) return;
+
+    const char *p = responseBody.c_str() + colon + 1;
+    while (*p == ' ' || *p == '\t') p++;
+    time_t sTime = (time_t)atoll(p);
+
+    if (sTime > 1700000000) {
+        time_t now = time(nullptr);
+        if (now < 1700000000 || labs((long)(sTime - now)) > 5) {
+            struct timeval tv = { .tv_sec = sTime, .tv_usec = 0 };
+            settimeofday(&tv, NULL);
+            Serial.printf("[Telemetry-RTC] Da dong bo RTC he thong tu server_time: %lld (Lech cu: %ld s)\n",
+                          (long long)sTime, (long)(sTime - now));
+        }
+    }
+}
+
+HttpSendResult TelemetryService::sendHttpPayload(const String &payload, const String &backendUrl, bool isBatch, size_t count, uint32_t seq) {
     String deviceId = this->getDeviceId();
 
-    // Timeout 1200ms cho batch de backend co du thoi gian parse mang JSON
     HTTPClient http;
-    http.setTimeout(isBatch ? 1500 : 800);
+    // Realtime >= 2000ms, Batch >= 4000ms
+    http.setTimeout(isBatch ? 4000 : 2000);
     http.setReuse(true);
 
-    bool success = false;
+    HttpSendResult result = HTTP_SEND_RETRYABLE_ERROR;
+
     if (http.begin(backendUrl)) {
         http.addHeader("Content-Type", "application/json");
         http.addHeader("User-Agent", "ESP32-S3-Sensor/2.0");
@@ -128,17 +305,26 @@ bool TelemetryService::sendHttpPayload(const String &payload, const String &back
 
         int httpCode = http.POST(payload);
         if (httpCode >= 200 && httpCode < 300) {
-            success = true;
+            result = HTTP_SEND_SUCCESS;
+            String resp = http.getString();
+            this->syncTimeFromServer(resp);
+        } else if (httpCode >= 400 && httpCode < 500) {
+            result = HTTP_SEND_CLIENT_ERROR;
+            Serial.printf("[Telemetry] Backend tu choi goi %s -> HTTP %d (%s)\n",
+                          isBatch ? "BATCH" : ("#" + String(seq)).c_str(),
+                          httpCode, http.errorToString(httpCode).c_str());
         } else {
-            Serial.printf("[Telemetry] Gui goi %s that bai -> HTTP %d (%s)\n",
+            result = HTTP_SEND_RETRYABLE_ERROR;
+            Serial.printf("[Telemetry] Loi he thong/mang goi %s -> HTTP %d (%s)\n",
                           isBatch ? "BATCH" : ("#" + String(seq)).c_str(),
                           httpCode, http.errorToString(httpCode).c_str());
         }
         http.end();
     } else {
         Serial.println("[Telemetry] Khong the khoi tao ket noi toi Backend URL!");
+        result = HTTP_SEND_RETRYABLE_ERROR;
     }
-    return success;
+    return result;
 }
 
 bool TelemetryService::flushBatchFromFlash(const String &backendUrl) {
@@ -157,7 +343,6 @@ bool TelemetryService::flushBatchFromFlash(const String &backendUrl) {
         return true;
     }
 
-    // Doc toi da BATCH_CHUNK_SIZE ban ghi moi lan gui
     size_t recordsToRead = (totalRecords > BATCH_CHUNK_SIZE) ? BATCH_CHUNK_SIZE : totalRecords;
     TelemetryRecord chunk[BATCH_CHUNK_SIZE];
     size_t actualRead = f.read((uint8_t *)chunk, recordsToRead * sizeof(TelemetryRecord)) / sizeof(TelemetryRecord);
@@ -167,7 +352,6 @@ bool TelemetryService::flushBatchFromFlash(const String &backendUrl) {
         return false;
     }
 
-    // Dong goi mang JSON Batch Ingestion
     String json;
     json.reserve(actualRead * 280 + 120);
     json = "{";
@@ -204,23 +388,26 @@ bool TelemetryService::flushBatchFromFlash(const String &backendUrl) {
     }
     json += "]}";
 
-    // Gui Batch Ingestion len Backend
-    bool ok = this->sendHttpPayload(json, backendUrl, true, actualRead, 0);
-    if (!ok) {
+    HttpSendResult res = this->sendHttpPayload(json, backendUrl, true, actualRead, 0);
+    if (res == HTTP_SEND_RETRYABLE_ERROR) {
         f.close();
         return false;
     }
 
-    Serial.printf("[Batch-Ingestion] Da gui bu thanh cong dot %u ban ghi Flash len Backend!\n", (unsigned int)actualRead);
+    if (res == HTTP_SEND_CLIENT_ERROR) {
+        Serial.printf("[Telemetry-Flash] Backend tu choi batch %u ban ghi (HTTP 4xx) -> Bo qua de tranh deadlock!\n",
+                      (unsigned int)actualRead);
+    } else {
+        Serial.printf("[Batch-Ingestion] Da gui bu thanh cong dot %u ban ghi Flash len Backend!\n",
+                      (unsigned int)actualRead);
+    }
 
-    // Xu ly phan con lai trong file
     size_t remainingRecords = totalRecords - actualRead;
     if (remainingRecords == 0) {
         f.close();
         LittleFS.remove(OFFLINE_FILE);
         Serial.println("[Batch-Ingestion] DA XA SACH TOAN BO DU LIEU OFFLINE TREN FLASH!");
     } else {
-        // Doc phan con lai va ghi vao file tam
         const char* TEMP_FILE = "/telemetry_temp.bin";
         File tempFile = LittleFS.open(TEMP_FILE, "wb");
         if (tempFile) {
@@ -241,13 +428,16 @@ bool TelemetryService::flushBatchFromFlash(const String &backendUrl) {
     return true;
 }
 
-void TelemetryService::sendData(TelemetryPayload data) {
-    // 1. Gan Sequence Number va Timestamp thoi gian thuc ngay tai thoi diem do nay
+void TelemetryService::processPayloadInternal(TelemetryPayload data) {
     this->packetSeq++;
     data.seq = this->packetSeq;
 
     time_t nowEpoch = time(nullptr);
-    data.timestamp = (nowEpoch > 100000) ? (uint32_t)nowEpoch : (millis() / 1000);
+    if (nowEpoch > 1700000000) {
+        data.timestamp = (uint32_t)nowEpoch;
+    } else {
+        data.timestamp = 0; // 0 bieu thi chua dong bo thoi gian, khong dung millis()/1000 gay nham nam 1970
+    }
 
     String dummySSID, dummyPass, dummyUser, backendUrl;
     bool dummyIsEnt = false;
@@ -257,7 +447,6 @@ void TelemetryService::sendData(TelemetryPayload data) {
         return;
     }
 
-    // Chuan bi san ban ghi TelemetryRecord de phong truong hop can luu Flash
     TelemetryRecord rec;
     rec.seq = data.seq;
     rec.timestamp = data.timestamp;
@@ -275,21 +464,29 @@ void TelemetryService::sendData(TelemetryPayload data) {
     rec.isAlert = data.isAlert;
     rec.sensorValid = data.sensorValid;
 
-    // 2. Kiem tra tinh trang ket noi Wi-Fi
+    // Kiem tra ket noi Wi-Fi
     if (!this->wifiService.isConnected()) {
-        // Mat Wi-Fi -> Ghi ben vung vao Flash LittleFS ngay lap tuc
-        this->appendRecordToFlash(rec);
-        Serial.printf("[Telemetry] Mat Wi-Fi -> Da luu goi #%u vao Flash LittleFS (Dang luu: %u ban ghi)\n",
-                      data.seq, (unsigned int)this->getFlashBacklogCount());
+        this->appendRecordToBuffer(rec);
+        Serial.printf("[Telemetry] Mat Wi-Fi -> Da luu goi #%u vao PSRAM Buffer (Dem: %u/%u, Flash: %u)\n",
+                      data.seq, (unsigned int)this->psramCount, (unsigned int)PSRAM_BUFFER_CAPACITY,
+                      (unsigned int)this->getFlashBacklogCount());
         return;
     }
 
-    // 3. Neu Wi-Fi dang ket noi va co ban ghi offline tren Flash: Gui Batch Ingestion de xa sach truoc
-    if (this->getFlashBacklogCount() > 0) {
-        this->flushBatchFromFlash(backendUrl);
+    // Co Wi-Fi: Neu co ban ghi tam trong PSRAM, flush xuong Flash truoc de dam bao thu tu thoi gian
+    if (this->psramCount > 0) {
+        this->flushPsramToFlash();
     }
 
-    // 4. Dong goi ban tin don le thoi gian thuc hien tai
+    // Xa sach cac batch offline tren Flash
+    while (this->getFlashBacklogCount() > 0) {
+        bool ok = this->flushBatchFromFlash(backendUrl);
+        if (!ok) {
+            break;
+        }
+    }
+
+    // Dong goi va gui ban tin thoi gian thuc
     String payload;
     payload.reserve(380);
     payload = "{";
@@ -319,26 +516,16 @@ void TelemetryService::sendData(TelemetryPayload data) {
     payload += "}";
     payload += "}";
 
-    // Gui goi tin thoi gian thuc
-    bool ok = this->sendHttpPayload(payload, backendUrl, false, 1, data.seq);
-    if (ok) {
+    HttpSendResult sendRes = this->sendHttpPayload(payload, backendUrl, false, 1, data.seq);
+    if (sendRes == HTTP_SEND_SUCCESS) {
         Serial.printf("[Telemetry] #%u | T: %.2f*C | H: %.2f%% | RSSI: %d dBm -> HTTP 200 (Flash Backlog: %u)\n",
                       data.seq, data.temperature, data.humidity, data.wifiRssi, (unsigned int)this->getFlashBacklogCount());
+    } else if (sendRes == HTTP_SEND_CLIENT_ERROR) {
+        Serial.printf("[Telemetry] #%u | Backend tu choi (HTTP 4xx) -> Bo qua de tranh deadlock!\n", data.seq);
     } else {
-        // Neu server loi hoac mang chap chon, ghi luon goi tin vao Flash de khong bao gio bi mat!
-        this->appendRecordToFlash(rec);
-        Serial.printf("[Telemetry] Gui that bai -> Da luu goi #%u vao Flash LittleFS de gui lai sau (Flash: %u)\n",
-                      data.seq, (unsigned int)this->getFlashBacklogCount());
+        this->appendRecordToBuffer(rec);
+        Serial.printf("[Telemetry] Gui that bai -> Da luu goi #%u vao PSRAM Buffer (Dem: %u/%u, Flash: %u)\n",
+                      data.seq, (unsigned int)this->psramCount, (unsigned int)PSRAM_BUFFER_CAPACITY,
+                      (unsigned int)this->getFlashBacklogCount());
     }
-}
-
-void TelemetryService::sendData(float temperature, float humidity) {
-    TelemetryPayload payload;
-    payload.temperature = temperature;
-    payload.humidity = humidity;
-    payload.sensorValid = true;
-    payload.uptimeSec = millis() / 1000;
-    payload.freeHeap = ESP.getFreeHeap();
-    payload.wifiRssi = WiFi.RSSI();
-    this->sendData(payload);
 }

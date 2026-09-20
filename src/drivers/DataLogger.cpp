@@ -75,7 +75,7 @@ void DataLogger::syncEpoch(uint32_t currentEpoch) {
     uint32_t bootEpoch = (currentEpoch >= currentUptime) ? (currentEpoch - currentUptime) : 0;
 
     for (uint16_t i = 0; i < this->count; i++) {
-        if (this->buffer[i].timestamp < 1000000000 && this->buffer[i].timestamp > 0) {
+        if (this->buffer[i].timestamp < 1000000000) {
             this->buffer[i].timestamp = bootEpoch + this->buffer[i].timestamp;
         }
     }
@@ -107,17 +107,25 @@ String DataLogger::getHistoryJson(uint16_t filterMinutes) {
         startIndex = (this->head + MAX_POINTS - pointsToTake) % MAX_POINTS;
     }
 
+    uint16_t step = 1;
+    if (pointsToTake > 360) {
+        step = (pointsToTake + 359) / 360;
+    }
+    uint16_t actualCount = (pointsToTake + step - 1) / step;
+
     String json;
-    json.reserve(pointsToTake * 22 + 64);
+    json.reserve(actualCount * 22 + 64);
     json = "{\"count\":";
-    json += String(pointsToTake);
+    json += String(actualCount);
     json += ",\"points\":[";
 
-    for (uint16_t i = 0; i < pointsToTake; i++) {
+    bool first = true;
+    for (uint16_t i = 0; i < pointsToTake; i += step) {
         uint16_t idx = (startIndex + i) % MAX_POINTS;
         HistoryPoint &pt = this->buffer[idx];
 
-        if (i > 0) json += ",";
+        if (!first) json += ",";
+        first = false;
         json += "[";
         json += String(pt.timestamp);
         json += ",";

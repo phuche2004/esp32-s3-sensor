@@ -212,7 +212,8 @@ void loop() {
       payload.isAlert = (currentTemperature > sensorSettings.tempAlert || currentHumidity > sensorSettings.humAlert);
       payload.sensorValid = hasValidData;
 
-      telemetry.sendData(payload);
+      // Day vao FreeRTOS Queue khong chan (Core 1 hoan toan khong bi block boi HTTP)
+      telemetry.pushPayload(payload);
     }
   }
 

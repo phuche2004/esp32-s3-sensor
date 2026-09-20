@@ -1122,6 +1122,22 @@ input:checked + .slider:before { transform: translateX(20px); }
     padding: 2px 8px;
     border-radius: 6px;
 }
+.chart-live-badge {
+    font-size: 10px;
+    font-weight: 700;
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.15);
+    border: 1px solid rgba(16, 185, 129, 0.35);
+    padding: 2px 7px;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    animation: livePulse 2s infinite;
+}
+@keyframes livePulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
+}
 .chart-wrapper {
     position: relative;
     width: 100%;

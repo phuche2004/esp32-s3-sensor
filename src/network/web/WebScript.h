@@ -135,6 +135,10 @@ function fetchSensorData() {
                     if (hEl) hEl.innerText = hStr;
                     if (stEl) stEl.innerText = tStr + ' °C';
                     if (shEl) shEl.innerText = hStr + ' %';
+                    var ctlEl = document.getElementById('statTempLive');
+                    var chlEl = document.getElementById('statHumLive');
+                    if (ctlEl) ctlEl.innerText = tStr;
+                    if (chlEl) chlEl.innerText = hStr;
 
                     if (bEl) {
                         if (data.alert) {
@@ -240,6 +244,7 @@ function fetchSensorData() {
 
                 var dUptime = document.getElementById('dashUptime');
                 if (data.uptimeSec !== undefined && dUptime) {
+                    lastUptimeSec = data.uptimeSec;
                     var up = data.uptimeSec;
                     var uh = Math.floor(up / 3600);
                     var um = Math.floor((up % 3600) / 60);
@@ -253,6 +258,11 @@ function fetchSensorData() {
                 // Cập nhật đồng bộ trạng thái Stress Test
                 if (data.stressActive !== undefined) {
                     updateStressUI(data.stressActive, data.stressSec);
+                }
+
+                // Cập nhật Realtime cho Tab Biểu Đồ nếu đang xem
+                if (currentActiveTab === 'chart' && data.valid && data.temp !== undefined && data.hum !== undefined) {
+                    onRealtimeSensorReading(data.temp, data.hum);
                 }
             }
         })
@@ -380,10 +390,12 @@ function showAlert(type, msg) {
     b.style.display = 'block';
 }
 
-// ==========================================
-// TAB NAVIGATION & LED RGB STUDIO
-// ==========================================
+var currentActiveTab = 'wifi';
+var lastUptimeSec = 0;
+var chartAutoRefreshTimer = null;
+
 function switchTab(tab) {
+    currentActiveTab = tab;
     var btnWifi = document.getElementById('tabBtnWifi');
     var btnSensor = document.getElementById('tabBtnSensor');
     var btnLed = document.getElementById('tabBtnLed');
@@ -423,10 +435,22 @@ function switchTab(tab) {
         if (cChart) cChart.style.display = 'block';
         syncDeviceTime();
         loadHistoryChart();
+        if (!chartAutoRefreshTimer) {
+            chartAutoRefreshTimer = setInterval(function() {
+                if (currentActiveTab === 'chart') {
+                    loadHistoryChart();
+                }
+            }, 10000);
+        }
     } else if (tab === 'power') {
         if (btnPower) btnPower.classList.add('active');
         if (cPower) cPower.style.display = 'block';
         loadPowerSettings();
+    }
+
+    if (tab !== 'chart' && chartAutoRefreshTimer) {
+        clearInterval(chartAutoRefreshTimer);
+        chartAutoRefreshTimer = null;
     }
 }
 
@@ -1019,11 +1043,12 @@ function toggleStressTest() {
 }
 
 // ==========================================
-// TAB 4: BIỂU ĐỒ LỊCH SỬ ĐO SHT31
+// TAB 4: BIỂU ĐỒ LỊCH SỬ ĐO SHT31 (REALTIME & KHUNG THỜI GIAN CHUẨN)
 // ==========================================
-var currentChartMins = 1440;
+var currentChartMins = 60; // Mặc định 1h trực quan và rõ nét ngay khi vào tab
 var cachedChartPoints = [];
 var chartRenderedCoords = [];
+var lastLivePointAddedTime = 0;
 
 function setChartFilter(mins) {
     currentChartMins = mins;
@@ -1047,126 +1072,178 @@ function syncDeviceTime() {
     fetch('/api/sync-time?epoch=' + epoch, { method: 'POST' }).catch(function(){});
 }
 
-function formatChartTime(ts, isEpoch, detail) {
-    var d;
-    if (isEpoch || ts > 1000000000) {
-        d = new Date(ts * 1000);
-    } else {
-        var lastPt = (cachedChartPoints && cachedChartPoints.length > 0) ? cachedChartPoints[cachedChartPoints.length - 1] : null;
-        var offsetSec = lastPt ? Math.max(0, lastPt[0] - ts) : 0;
-        var clientNowSec = Math.floor(Date.now() / 1000);
-        d = new Date((clientNowSec - offsetSec) * 1000);
-    }
+function formatChartTime(ts, showSeconds, showDate) {
+    if (!ts || isNaN(ts) || ts <= 0) return '--:--';
+    var d = new Date(ts * 1000);
     var hh = ('0' + d.getHours()).slice(-2);
     var mm = ('0' + d.getMinutes()).slice(-2);
-    if (detail) {
-        var ss = ('0' + d.getSeconds()).slice(-2);
+    var ss = ('0' + d.getSeconds()).slice(-2);
+    if (showDate) {
         var dd = ('0' + d.getDate()).slice(-2);
         var mo = ('0' + (d.getMonth() + 1)).slice(-2);
         return dd + '/' + mo + ' ' + hh + ':' + mm + ':' + ss;
     }
+    if (showSeconds) {
+        return hh + ':' + mm + ':' + ss;
+    }
     return hh + ':' + mm;
+}
+
+function updateChartStats(minT, maxT, minH, maxH, liveT, liveH) {
+    var elTlive = document.getElementById('statTempLive');
+    var elHlive = document.getElementById('statHumLive');
+    var elTmin = document.getElementById('statTempMin');
+    var elTmax = document.getElementById('statTempMax');
+    var elHmin = document.getElementById('statHumMin');
+    var elHmax = document.getElementById('statHumMax');
+    if (elTlive && liveT !== undefined && !isNaN(liveT)) elTlive.innerText = Number(liveT).toFixed(1);
+    if (elHlive && liveH !== undefined && !isNaN(liveH)) elHlive.innerText = Number(liveH).toFixed(1);
+    if (elTmin) elTmin.innerText = (minT < 900) ? minT.toFixed(1) : '--.-';
+    if (elTmax) elTmax.innerText = (maxT > -900) ? maxT.toFixed(1) : '--.-';
+    if (elHmin) elHmin.innerText = (minH < 900) ? minH.toFixed(1) : '--.-';
+    if (elHmax) elHmax.innerText = (maxH > -900) ? maxH.toFixed(1) : '--.-';
+}
+
+// Lấy danh sách điểm tương ứng với khung thời gian đang chọn
+function getDisplayChartPoints() {
+    if (!cachedChartPoints || cachedChartPoints.length === 0) return [];
+    if (currentChartMins <= 0) return cachedChartPoints;
+    var nowSec = Math.floor(Date.now() / 1000);
+    var cutoff = nowSec - (currentChartMins * 60);
+    return cachedChartPoints.filter(function(p) { return p[0] >= cutoff; });
+}
+
+// Cập nhật điểm đo thời gian thực từ chu kỳ polling 1.5s
+function onRealtimeSensorReading(temp, hum) {
+    if (isNaN(temp) || isNaN(hum)) return;
+    var nowSec = Math.floor(Date.now() / 1000);
+
+    if (!cachedChartPoints) cachedChartPoints = [];
+
+    // Mỗi 3 giây ghi nhận 1 mốc mới để đường biểu đồ nối dài liên tục
+    // Giữa chu kỳ 3 giây thì cập nhật điểm đầu mút mới nhất
+    if (cachedChartPoints.length > 0) {
+        var lastPt = cachedChartPoints[cachedChartPoints.length - 1];
+        if (nowSec - lastLivePointAddedTime < 3 && lastPt[0] >= lastLivePointAddedTime) {
+            lastPt[0] = nowSec;
+            lastPt[1] = temp;
+            lastPt[2] = hum;
+        } else {
+            cachedChartPoints.push([nowSec, temp, hum]);
+            lastLivePointAddedTime = nowSec;
+        }
+    } else {
+        cachedChartPoints.push([nowSec, temp, hum]);
+        lastLivePointAddedTime = nowSec;
+    }
+
+    // Giới hạn tối đa 2000 điểm trong bộ nhớ trình duyệt
+    if (cachedChartPoints.length > 2000) {
+        cachedChartPoints.shift();
+    }
+
+    var displayPoints = getDisplayChartPoints();
+
+    var countEl = document.getElementById('chartDataCount');
+    if (countEl) {
+        countEl.innerText = displayPoints.length + ' mẫu (Trực tiếp)';
+    }
+
+    // Tính Min / Max
+    var minT = 999.0, maxT = -999.0;
+    var minH = 999.0, maxH = -999.0;
+    if (displayPoints.length > 0) {
+        for (var i = 0; i < displayPoints.length; i++) {
+            var p = displayPoints[i];
+            if (p[1] < minT) minT = p[1];
+            if (p[1] > maxT) maxT = p[1];
+            if (p[2] < minH) minH = p[2];
+            if (p[2] > maxH) maxH = p[2];
+        }
+    } else {
+        minT = temp; maxT = temp;
+        minH = hum; maxH = hum;
+    }
+
+    updateChartStats(minT, maxT, minH, maxH, temp, hum);
+    renderHistoryCanvas(displayPoints, minT, maxT, minH, maxH, -1);
 }
 
 function loadHistoryChart() {
     var countEl = document.getElementById('chartDataCount');
-    if (countEl) countEl.innerText = 'Đang tải...';
+    if (countEl && (!cachedChartPoints || cachedChartPoints.length === 0)) {
+        countEl.innerText = 'Đang tải...';
+    }
 
     var clientEpoch = Math.floor(Date.now() / 1000);
     fetch('/api/history?mins=' + currentChartMins + '&epoch=' + clientEpoch)
         .then(function(res) { return res.json(); })
         .then(function(data) {
             var raw = (data && (data.points || data.data)) ? (data.points || data.data) : [];
-            
-            var valid = [];
+            var clientNow = Math.floor(Date.now() / 1000);
+            var bootEpoch = (lastUptimeSec > 0) ? (clientNow - lastUptimeSec) : clientNow;
+
+            var serverPoints = [];
             for (var i = 0; i < raw.length; i++) {
                 var p = raw[i];
                 if (p && p.length >= 3 && !isNaN(p[0]) && !isNaN(p[1]) && !isNaN(p[2])) {
-                    valid.push([Number(p[0]), Number(p[1]), Number(p[2])]);
-                }
-            }
-
-            // Dong nhat he quy chieu thoi gian neu ton tai ca uptime va unix epoch
-            var hasEpoch = valid.some(function(p) { return p[0] > 1000000000; });
-            if (hasEpoch) {
-                var maxEpoch = 0;
-                for (var i = 0; i < valid.length; i++) {
-                    if (valid[i][0] > 1000000000 && valid[i][0] > maxEpoch) maxEpoch = valid[i][0];
-                }
-                for (var i = 0; i < valid.length; i++) {
-                    if (valid[i][0] < 1000000000) {
-                        valid[i][0] = maxEpoch - (valid.length - 1 - i) * 60;
+                    var ptTime = Number(p[0]);
+                    if (ptTime < 1000000000) {
+                        ptTime = bootEpoch + ptTime;
                     }
+                    serverPoints.push([ptTime, Number(p[1]), Number(p[2])]);
                 }
             }
+            serverPoints.sort(function(a, b) { return a[0] - b[0]; });
 
-            // Sap xep tang dan de loai bo hien tuong ve giat nguoc
-            valid.sort(function(a, b) { return a[0] - b[0]; });
-
-            // Loc theo so phut can xem neu chon bo loc cu the
-            if (currentChartMins > 0 && valid.length > 0) {
-                var latestTime = valid[valid.length - 1][0];
-                var startTime = latestTime - (currentChartMins * 60);
-                valid = valid.filter(function(p) { return p[0] >= startTime; });
+            // Giữ lại các điểm realtime gần nhất đã thu thập mà server chưa lưu vào Flash
+            var lastServerTime = (serverPoints.length > 0) ? serverPoints[serverPoints.length - 1][0] : 0;
+            var recentLivePoints = [];
+            if (cachedChartPoints && cachedChartPoints.length > 0) {
+                recentLivePoints = cachedChartPoints.filter(function(p) {
+                    return p[0] > lastServerTime;
+                });
             }
 
-            cachedChartPoints = valid;
+            cachedChartPoints = serverPoints.concat(recentLivePoints);
 
-            var countText = cachedChartPoints.length + ' mẫu';
-            if (cachedChartPoints.length > 0) {
-                var minT = cachedChartPoints[0][0];
-                var maxT = cachedChartPoints[cachedChartPoints.length - 1][0];
+            var displayPoints = getDisplayChartPoints();
+
+            var countText = displayPoints.length + ' mẫu';
+            if (displayPoints.length > 0) {
+                var minT = displayPoints[0][0];
+                var maxT = displayPoints[displayPoints.length - 1][0];
                 var spanSec = Math.max(0, maxT - minT);
                 var spanMin = Math.round(spanSec / 60);
                 if (spanMin >= 60) {
                     var spanH = Math.floor(spanMin / 60);
                     var remM = spanMin % 60;
-                    countText = 'Đã lưu: ' + spanH + 'h' + (remM > 0 ? remM + 'm' : '') + ' (' + cachedChartPoints.length + ' mẫu)';
+                    countText = 'Đã lưu: ' + spanH + 'h' + (remM > 0 ? remM + 'm' : '') + ' (' + displayPoints.length + ' mẫu)';
                 } else {
-                    countText = 'Đã lưu: ' + Math.max(1, spanMin) + ' phút (' + cachedChartPoints.length + ' mẫu)';
+                    countText = 'Đã lưu: ' + Math.max(1, spanMin) + ' phút (' + displayPoints.length + ' mẫu)';
                 }
             }
             if (countEl) countEl.innerText = countText;
 
-            if (cachedChartPoints.length === 0) {
-                var tMin = document.getElementById('statTempMin');
-                var tMax = document.getElementById('statTempMax');
-                var hMin = document.getElementById('statHumMin');
-                var hMax = document.getElementById('statHumMax');
-                if (tMin) tMin.innerText = '--.-';
-                if (tMax) tMax.innerText = '--.-';
-                if (hMin) hMin.innerText = '--.-';
-                if (hMax) hMax.innerText = '--.-';
-                renderEmptyChart('Chưa có dữ liệu trong khoảng thời gian này');
-                return;
-            }
-
             var minT = 999.0, maxT = -999.0;
             var minH = 999.0, maxH = -999.0;
-            for (var i = 0; i < cachedChartPoints.length; i++) {
-                var p = cachedChartPoints[i];
-                var t = p[1];
-                var h = p[2];
-                if (t < minT) minT = t;
-                if (t > maxT) maxT = t;
-                if (h < minH) minH = h;
-                if (h > maxH) maxH = h;
+            for (var i = 0; i < displayPoints.length; i++) {
+                var p = displayPoints[i];
+                if (p[1] < minT) minT = p[1];
+                if (p[1] > maxT) maxT = p[1];
+                if (p[2] < minH) minH = p[2];
+                if (p[2] > maxH) maxH = p[2];
             }
 
-            var elTmin = document.getElementById('statTempMin');
-            var elTmax = document.getElementById('statTempMax');
-            var elHmin = document.getElementById('statHumMin');
-            var elHmax = document.getElementById('statHumMax');
-            if (elTmin) elTmin.innerText = minT.toFixed(1);
-            if (elTmax) elTmax.innerText = maxT.toFixed(1);
-            if (elHmin) elHmin.innerText = minH.toFixed(1);
-            if (elHmax) elHmax.innerText = maxH.toFixed(1);
-
-            renderHistoryCanvas(cachedChartPoints, minT, maxT, minH, maxH, -1);
+            var liveT = (displayPoints.length > 0) ? displayPoints[displayPoints.length - 1][1] : undefined;
+            var liveH = (displayPoints.length > 0) ? displayPoints[displayPoints.length - 1][2] : undefined;
+            updateChartStats(minT, maxT, minH, maxH, liveT, liveH);
+            renderHistoryCanvas(displayPoints, minT, maxT, minH, maxH, -1);
         })
         .catch(function(err) {
-            if (countEl) countEl.innerText = 'Lỗi nạp';
-            renderEmptyChart('Không thể kết nối máy chủ');
+            if (countEl && (!cachedChartPoints || cachedChartPoints.length === 0)) {
+                countEl.innerText = 'Lỗi nạp';
+            }
         });
 }
 
@@ -1208,7 +1285,35 @@ function renderHistoryCanvas(points, minT, maxT, minH, maxH, highlightIdx) {
 
     if (plotW <= 10 || plotH <= 10) return;
 
-    var isEpoch = (points.length > 0 && points[0][0] > 1000000000);
+    var nowSec = Math.floor(Date.now() / 1000);
+    var viewEndTime = nowSec;
+    var viewStartTime;
+
+    if (currentChartMins > 0) {
+        // Khung thời gian cố định: 15m, 1h, 3h, 6h, 12h, 24h
+        viewStartTime = nowSec - (currentChartMins * 60);
+    } else {
+        // "Tất Cả": căn theo toàn bộ dải dữ liệu
+        if (points && points.length >= 2) {
+            viewStartTime = points[0][0];
+            viewEndTime = Math.max(nowSec, points[points.length - 1][0]);
+            if (viewEndTime - viewStartTime < 300) {
+                viewStartTime = viewEndTime - 300;
+            }
+        } else if (points && points.length === 1) {
+            viewStartTime = points[0][0] - 180;
+            viewEndTime = Math.max(nowSec, points[0][0] + 120);
+        } else {
+            viewStartTime = nowSec - 3600;
+            viewEndTime = nowSec;
+        }
+    }
+
+    var timeSpan = viewEndTime - viewStartTime;
+    if (timeSpan <= 0) timeSpan = 60;
+
+    if (minT > maxT) { minT = 25.0; maxT = 30.0; }
+    if (minH > maxH) { minH = 50.0; maxH = 70.0; }
 
     var scaleMinT = Math.floor(minT - 0.5);
     var scaleMaxT = Math.ceil(maxT + 0.5);
@@ -1218,7 +1323,7 @@ function renderHistoryCanvas(points, minT, maxT, minH, maxH, highlightIdx) {
     var scaleMaxH = Math.min(100, Math.ceil(maxH + 3));
     if (scaleMaxH - scaleMinH < 8) scaleMaxH = scaleMinH + 8;
 
-    // Luoi ngang (Grid lines)
+    // 1. Lưới ngang (Grid lines)
     var gridSteps = 4;
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
     ctx.lineWidth = 1;
@@ -1244,7 +1349,7 @@ function renderHistoryCanvas(points, minT, maxT, minH, maxH, highlightIdx) {
         ctx.fillText(Math.round(hVal) + '%', padL + plotW + 5, gy);
     }
 
-    // Vung nen canh bao nhiet do
+    // 2. Vùng nền cảnh báo nhiệt độ
     var TEMP_HIGH = 36.0;
     var TEMP_LOW  = 31.0;
     var tRange = scaleMaxT - scaleMinT;
@@ -1266,175 +1371,180 @@ function renderHistoryCanvas(points, minT, maxT, minH, maxH, highlightIdx) {
     }
     ctx.restore();
 
-    if (points.length === 1) {
-        var singleX = padL + plotW / 2;
-        var sYt = padT + plotH - ((points[0][1] - scaleMinT) / (scaleMaxT - scaleMinT)) * plotH;
-        var sYh = padT + plotH - ((points[0][2] - scaleMinH) / (scaleMaxH - scaleMinH)) * plotH;
-        ctx.fillStyle = '#f43f5e';
-        ctx.beginPath(); ctx.arc(singleX, sYt, 5, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#38bdf8';
-        ctx.beginPath(); ctx.arc(singleX, sYh, 5, 0, Math.PI * 2); ctx.fill();
-        chartRenderedCoords = [{ x: singleX, yT: sYt, yH: sYh, pt: points[0] }];
-        return;
+    // Nếu chưa có dữ liệu điểm đo nào
+    if (!points || points.length === 0) {
+        ctx.fillStyle = '#64748b';
+        ctx.font = '12px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('Đang chờ dữ liệu cảm biến...', padL + plotW / 2, padT + plotH / 2);
     }
 
-    var minTime = points[0][0];
-    var maxTime = points[points.length - 1][0];
-    var timeSpan = maxTime - minTime;
-    if (timeSpan <= 0) timeSpan = points.length;
-
+    // 3. Tính tọa độ x, y của các điểm
     chartRenderedCoords = [];
-    for (var i = 0; i < points.length; i++) {
-        var pt = points[i];
-        var x = (timeSpan > 0 && maxTime !== minTime)
-            ? padL + ((pt[0] - minTime) / timeSpan) * plotW
-            : padL + (i / (points.length - 1)) * plotW;
-        var yT = padT + plotH - ((pt[1] - scaleMinT) / (scaleMaxT - scaleMinT)) * plotH;
-        var yH = padT + plotH - ((pt[2] - scaleMinH) / (scaleMaxH - scaleMinH)) * plotH;
-        chartRenderedCoords.push({ x: x, yT: yT, yH: yH, pt: pt });
+    if (points && points.length > 0) {
+        for (var i = 0; i < points.length; i++) {
+            var pt = points[i];
+            var x = padL + ((pt[0] - viewStartTime) / timeSpan) * plotW;
+            if (x > padL + plotW) x = padL + plotW; // Tránh bị cắt ở mép phải
+            var yT = padT + plotH - ((pt[1] - scaleMinT) / (scaleMaxT - scaleMinT)) * plotH;
+            var yH = padT + plotH - ((pt[2] - scaleMinH) / (scaleMaxH - scaleMinH)) * plotH;
+            chartRenderedCoords.push({ x: x, yT: yT, yH: yH, pt: pt });
+        }
     }
 
-    // Tach thanh cac doan lien tuc, ngat net khi co gap > 300s de khong ke cheo khi mat nguon
-    var GAP_THRESHOLD = 300;
-    var segments = [];
-    var curSeg = [];
-    for (var i = 0; i < chartRenderedCoords.length; i++) {
-        var c = chartRenderedCoords[i];
-        if (curSeg.length === 0) {
-            curSeg.push(c);
-        } else {
-            var prevC = curSeg[curSeg.length - 1];
-            if ((c.pt[0] - prevC.pt[0]) > GAP_THRESHOLD) {
-                segments.push(curSeg);
-                curSeg = [c];
-            } else {
+    // 4. Vẽ đường biểu đồ và gradient (cắt theo khung plot)
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(padL, padT, plotW, plotH);
+    ctx.clip();
+
+    if (chartRenderedCoords.length > 0) {
+        var GAP_THRESHOLD = 300;
+        var segments = [];
+        var curSeg = [];
+        for (var i = 0; i < chartRenderedCoords.length; i++) {
+            var c = chartRenderedCoords[i];
+            if (curSeg.length === 0) {
                 curSeg.push(c);
+            } else {
+                var prevC = curSeg[curSeg.length - 1];
+                if ((c.pt[0] - prevC.pt[0]) > GAP_THRESHOLD) {
+                    segments.push(curSeg);
+                    curSeg = [c];
+                } else {
+                    curSeg.push(c);
+                }
             }
         }
-    }
-    if (curSeg.length > 0) {
-        segments.push(curSeg);
-    }
+        if (curSeg.length > 0) segments.push(curSeg);
 
-    // 1. Ve vung phu gradient Do Am theo tung segment
-    var gradH = ctx.createLinearGradient(0, padT, 0, padT + plotH);
-    gradH.addColorStop(0, 'rgba(56, 189, 248, 0.22)');
-    gradH.addColorStop(1, 'rgba(56, 189, 248, 0.00)');
-    for (var s = 0; s < segments.length; s++) {
-        var seg = segments[s];
-        if (seg.length >= 2) {
-            ctx.beginPath();
-            ctx.moveTo(seg[0].x, padT + plotH);
-            for (var j = 0; j < seg.length; j++) {
-                ctx.lineTo(seg[j].x, seg[j].yH);
+        // Gradient Độ Ẩm
+        var gradH = ctx.createLinearGradient(0, padT, 0, padT + plotH);
+        gradH.addColorStop(0, 'rgba(56, 189, 248, 0.22)');
+        gradH.addColorStop(1, 'rgba(56, 189, 248, 0.00)');
+        for (var s = 0; s < segments.length; s++) {
+            var seg = segments[s];
+            if (seg.length >= 2) {
+                ctx.beginPath();
+                ctx.moveTo(seg[0].x, padT + plotH);
+                for (var j = 0; j < seg.length; j++) ctx.lineTo(seg[j].x, seg[j].yH);
+                ctx.lineTo(seg[seg.length - 1].x, padT + plotH);
+                ctx.closePath();
+                ctx.fillStyle = gradH;
+                ctx.fill();
             }
-            ctx.lineTo(seg[seg.length - 1].x, padT + plotH);
-            ctx.closePath();
-            ctx.fillStyle = gradH;
-            ctx.fill();
         }
-    }
 
-    // 2. Ve duong Do Am theo tung segment
-    ctx.strokeStyle = '#38bdf8';
-    ctx.lineWidth = 2;
-    ctx.lineJoin = 'round';
-    for (var s = 0; s < segments.length; s++) {
-        var seg = segments[s];
-        if (seg.length >= 2) {
-            ctx.beginPath();
-            ctx.moveTo(seg[0].x, seg[0].yH);
-            for (var j = 1; j < seg.length; j++) {
-                ctx.lineTo(seg[j].x, seg[j].yH);
+        // Đường Độ Ẩm
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 2;
+        ctx.lineJoin = 'round';
+        for (var s = 0; s < segments.length; s++) {
+            var seg = segments[s];
+            if (seg.length >= 2) {
+                ctx.beginPath();
+                ctx.moveTo(seg[0].x, seg[0].yH);
+                for (var j = 1; j < seg.length; j++) ctx.lineTo(seg[j].x, seg[j].yH);
+                ctx.stroke();
+            } else if (seg.length === 1) {
+                ctx.beginPath();
+                ctx.arc(seg[0].x, seg[0].yH, 3.5, 0, Math.PI * 2);
+                ctx.fillStyle = '#38bdf8';
+                ctx.fill();
             }
-            ctx.stroke();
-        } else if (seg.length === 1) {
-            ctx.beginPath();
-            ctx.arc(seg[0].x, seg[0].yH, 2.5, 0, Math.PI * 2);
-            ctx.fillStyle = '#38bdf8';
-            ctx.fill();
         }
-    }
 
-    // 3. Ve vung phu gradient Nhiet Do theo tung segment
-    var gradT = ctx.createLinearGradient(0, padT, 0, padT + plotH);
-    gradT.addColorStop(0, 'rgba(244, 63, 94, 0.25)');
-    gradT.addColorStop(1, 'rgba(244, 63, 94, 0.00)');
-    for (var s = 0; s < segments.length; s++) {
-        var seg = segments[s];
-        if (seg.length >= 2) {
-            ctx.beginPath();
-            ctx.moveTo(seg[0].x, padT + plotH);
-            for (var j = 0; j < seg.length; j++) {
-                ctx.lineTo(seg[j].x, seg[j].yT);
+        // Gradient Nhiệt Độ
+        var gradT = ctx.createLinearGradient(0, padT, 0, padT + plotH);
+        gradT.addColorStop(0, 'rgba(244, 63, 94, 0.25)');
+        gradT.addColorStop(1, 'rgba(244, 63, 94, 0.00)');
+        for (var s = 0; s < segments.length; s++) {
+            var seg = segments[s];
+            if (seg.length >= 2) {
+                ctx.beginPath();
+                ctx.moveTo(seg[0].x, padT + plotH);
+                for (var j = 0; j < seg.length; j++) ctx.lineTo(seg[j].x, seg[j].yT);
+                ctx.lineTo(seg[seg.length - 1].x, padT + plotH);
+                ctx.closePath();
+                ctx.fillStyle = gradT;
+                ctx.fill();
             }
-            ctx.lineTo(seg[seg.length - 1].x, padT + plotH);
-            ctx.closePath();
-            ctx.fillStyle = gradT;
-            ctx.fill();
         }
-    }
 
-    // 4. Ve duong Nhiet Do theo tung segment
-    ctx.strokeStyle = '#f43f5e';
-    ctx.lineWidth = 2;
-    ctx.lineJoin = 'round';
-    for (var s = 0; s < segments.length; s++) {
-        var seg = segments[s];
-        if (seg.length >= 2) {
-            ctx.beginPath();
-            ctx.moveTo(seg[0].x, seg[0].yT);
-            for (var j = 1; j < seg.length; j++) {
-                ctx.lineTo(seg[j].x, seg[j].yT);
+        // Đường Nhiệt Độ
+        ctx.strokeStyle = '#f43f5e';
+        ctx.lineWidth = 2;
+        ctx.lineJoin = 'round';
+        for (var s = 0; s < segments.length; s++) {
+            var seg = segments[s];
+            if (seg.length >= 2) {
+                ctx.beginPath();
+                ctx.moveTo(seg[0].x, seg[0].yT);
+                for (var j = 1; j < seg.length; j++) ctx.lineTo(seg[j].x, seg[j].yT);
+                ctx.stroke();
+            } else if (seg.length === 1) {
+                ctx.beginPath();
+                ctx.arc(seg[0].x, seg[0].yT, 3.5, 0, Math.PI * 2);
+                ctx.fillStyle = '#f43f5e';
+                ctx.fill();
             }
-            ctx.stroke();
-        } else if (seg.length === 1) {
-            ctx.beginPath();
-            ctx.arc(seg[0].x, seg[0].yT, 2.5, 0, Math.PI * 2);
+        }
+
+        // Điểm Live Dot ở cuối cùng
+        var lastPtCoord = chartRenderedCoords[chartRenderedCoords.length - 1];
+        if (lastPtCoord && lastPtCoord.x >= padL - 2 && lastPtCoord.x <= padL + plotW + 2) {
             ctx.fillStyle = '#f43f5e';
-            ctx.fill();
+            ctx.beginPath(); ctx.arc(lastPtCoord.x, lastPtCoord.yT, 4, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#38bdf8';
+            ctx.beginPath(); ctx.arc(lastPtCoord.x, lastPtCoord.yH, 4, 0, Math.PI * 2); ctx.fill();
         }
     }
+    ctx.restore();
 
-    // 5. Nhan thoi gian truc X
+    // 5. Nhãn thời gian trục X
     ctx.fillStyle = '#64748b';
     ctx.font = '10px system-ui, sans-serif';
-    ctx.textAlign = 'left';
-    ctx.fillText(formatChartTime(minTime, isEpoch), padL, padT + plotH + 16);
-    ctx.textAlign = 'right';
-    ctx.fillText(formatChartTime(maxTime, isEpoch), padL + plotW, padT + plotH + 16);
-    if (points.length > 2) {
-        var midIdx = Math.floor(points.length / 2);
-        ctx.textAlign = 'center';
-        ctx.fillText(formatChartTime(points[midIdx][0], isEpoch), chartRenderedCoords[midIdx].x, padT + plotH + 16);
-    }
+    ctx.textBaseline = 'alphabetic';
+    var showSec = (currentChartMins > 0 && currentChartMins <= 60);
 
-    // 6. Highlight diem dang duoc hover/touch
+    ctx.textAlign = 'left';
+    ctx.fillText(formatChartTime(viewStartTime, showSec), padL, padT + plotH + 16);
+
+    ctx.textAlign = 'center';
+    var midTime = Math.round(viewStartTime + timeSpan / 2);
+    ctx.fillText(formatChartTime(midTime, showSec), padL + plotW / 2, padT + plotH + 16);
+
+    ctx.textAlign = 'right';
+    ctx.fillText(formatChartTime(viewEndTime, showSec), padL + plotW, padT + plotH + 16);
+
+    // 6. Highlight điểm đang hover / touch
     if (highlightIdx >= 0 && highlightIdx < chartRenderedCoords.length) {
         var hp = chartRenderedCoords[highlightIdx];
+        if (hp.x >= padL && hp.x <= padL + plotW) {
+            ctx.beginPath();
+            ctx.setLineDash([3, 3]);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+            ctx.lineWidth = 1;
+            ctx.moveTo(hp.x, padT);
+            ctx.lineTo(hp.x, padT + plotH);
+            ctx.stroke();
+            ctx.setLineDash([]);
 
-        ctx.beginPath();
-        ctx.setLineDash([3, 3]);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-        ctx.lineWidth = 1;
-        ctx.moveTo(hp.x, padT);
-        ctx.lineTo(hp.x, padT + plotH);
-        ctx.stroke();
-        ctx.setLineDash([]);
+            ctx.fillStyle = '#f43f5e';
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(hp.x, hp.yT, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
 
-        ctx.fillStyle = '#f43f5e';
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(hp.x, hp.yT, 5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-
-        ctx.fillStyle = '#38bdf8';
-        ctx.beginPath();
-        ctx.arc(hp.x, hp.yH, 5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
+            ctx.fillStyle = '#38bdf8';
+            ctx.beginPath();
+            ctx.arc(hp.x, hp.yH, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+        }
     }
 }
 
@@ -1448,19 +1558,22 @@ function handleChartHover(clientX, clientY) {
     var x = clientX - rect.left;
     var y = clientY - rect.top;
 
-    var closestIdx = 0;
+    var closestIdx = -1;
     var minDist = 99999;
+    var padL = 34, padR = 34;
     for (var i = 0; i < chartRenderedCoords.length; i++) {
-        var dist = Math.abs(chartRenderedCoords[i].x - x);
+        var c = chartRenderedCoords[i];
+        if (c.x < padL - 5 || c.x > rect.width - padR + 5) continue;
+        var dist = Math.abs(c.x - x);
         if (dist < minDist) {
             minDist = dist;
             closestIdx = i;
         }
     }
+    if (closestIdx < 0) return;
 
     var match = chartRenderedCoords[closestIdx];
-    var isEpoch = (match.pt[0] > 1000000000);
-    var timeStr = formatChartTime(match.pt[0], isEpoch, true);
+    var timeStr = formatChartTime(match.pt[0], true, true);
 
     tooltip.innerHTML = '<div style="font-weight:700; color:#cbd5e1; margin-bottom:3px;">Thời gian: ' + timeStr + '</div>' +
         '<div style="color:#f43f5e; font-weight:700;">Nhiệt độ: ' + match.pt[1].toFixed(1) + ' °C</div>' +
@@ -1493,7 +1606,8 @@ function handleChartHover(clientX, clientY) {
     tooltip.style.top  = tipTop + 'px';
     tooltip.style.visibility = 'visible';
 
-    renderHistoryCanvas(cachedChartPoints,
+    var displayPoints = getDisplayChartPoints();
+    renderHistoryCanvas(displayPoints,
         parseFloat(document.getElementById('statTempMin').innerText) || 20,
         parseFloat(document.getElementById('statTempMax').innerText) || 40,
         parseFloat(document.getElementById('statHumMin').innerText) || 30,
@@ -1505,15 +1619,14 @@ function handleChartHover(clientX, clientY) {
 function hideChartTooltip() {
     var tooltip = document.getElementById('chartTooltip');
     if (tooltip) tooltip.style.display = 'none';
-    if (cachedChartPoints && cachedChartPoints.length > 0) {
-        renderHistoryCanvas(cachedChartPoints,
-            parseFloat(document.getElementById('statTempMin').innerText) || 20,
-            parseFloat(document.getElementById('statTempMax').innerText) || 40,
-            parseFloat(document.getElementById('statHumMin').innerText) || 30,
-            parseFloat(document.getElementById('statHumMax').innerText) || 80,
-            -1
-        );
-    }
+    var displayPoints = getDisplayChartPoints();
+    renderHistoryCanvas(displayPoints,
+        parseFloat(document.getElementById('statTempMin').innerText) || 20,
+        parseFloat(document.getElementById('statTempMax').innerText) || 40,
+        parseFloat(document.getElementById('statHumMin').innerText) || 30,
+        parseFloat(document.getElementById('statHumMax').innerText) || 80,
+        -1
+    );
 }
 
 function initChartEvents() {
