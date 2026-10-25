@@ -1,5 +1,7 @@
-#pragma once
+﻿#pragma once
 #include <Arduino.h>
+#include <WiFiClient.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <FS.h>
 #include <LittleFS.h>
@@ -11,8 +13,8 @@
 
 // Ket qua gui HTTP phan loai ro rang de xu ly (Chong Deadlock 4xx)
 enum HttpSendResult {
-    HTTP_SEND_SUCCESS = 0,     // 2xx: Gui thanh cong
-    HTTP_SEND_CLIENT_ERROR,    // 4xx: Loi do payload/auth -> Bo qua batch de tranh deadlock
+    HTTP_SEND_SUCCESS = 0,     // 2xx / ACK ok: Gui thanh cong
+    HTTP_SEND_CLIENT_ERROR,    // 4xx / client_error: Loi do payload/auth -> Bo qua batch de tranh deadlock
     HTTP_SEND_RETRYABLE_ERROR  // 5xx hoac timeout (<0): Loi server/mang -> Giu lai de thu lai sau
 };
 
@@ -91,6 +93,13 @@ private:
     String cachedDeviceId;
     bool littleFsMounted;
 
+    // Persistent HTTP Stream (1 Request duy nhat giu ket noi suot ca ngay)
+    WiFiClient streamClient;
+    WiFiClientSecure secureClient;
+    WiFiClient* activeClient;
+    String cachedBackendUrl;
+    uint32_t lastConfigCheckMs;
+
     // FreeRTOS Task & Queue (Chay doc lap tren Core 0)
     QueueHandle_t telemetryQueue;
     TaskHandle_t telemetryTaskHandle;
@@ -102,6 +111,8 @@ private:
     size_t psramCount;
     bool psramAvailable;
 
+    bool ensureStreamConnected(const String &backendUrl);
+    void closeStream();
     bool appendRecordToBuffer(const TelemetryRecord &rec);
     bool flushPsramToFlash();
     bool appendRecordToFlash(const TelemetryRecord &rec);

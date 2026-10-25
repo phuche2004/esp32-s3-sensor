@@ -14,6 +14,9 @@ void StorageManager::loadCredentials(String &ssid, String &password, String &use
     username = this->prefs.isKey("username") ? this->prefs.getString("username", "") : "";
     isEnterprise = this->prefs.isKey("is_ent") ? this->prefs.getBool("is_ent", false) : false;
     backendUrl = this->prefs.isKey("backend") ? this->prefs.getString("backend", DEFAULT_BACKEND_URL) : DEFAULT_BACKEND_URL;
+    if (backendUrl.indexOf("api.abcpharmacy.store") != -1) {
+        backendUrl = DEFAULT_BACKEND_URL;
+    }
     this->prefs.end();
 }
 

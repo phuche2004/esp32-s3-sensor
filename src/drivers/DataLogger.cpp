@@ -65,8 +65,11 @@ void DataLogger::addPoint(float temp, float hum, uint32_t timestamp) {
         this->count++;
     }
 
-    // Luu Flash ngay sau moi diem do de rut cap/mat dien khong bi mat du lieu
-    this->saveSnapshot();
+    // Chi luu ngay o diem dau tien; cac diem sau luu dinh ky moi 15 phut trong loop() de bao ve Flash NOR
+    if (this->count == 1) {
+        this->saveSnapshot();
+        this->lastSnapshotTime = millis();
+    }
 }
 
 void DataLogger::syncEpoch(uint32_t currentEpoch) {
@@ -85,7 +88,12 @@ void DataLogger::syncEpoch(uint32_t currentEpoch) {
 }
 
 void DataLogger::loop() {
-    // Du lieu da duoc luu dong bo moi khi co diem do moi trong addPoint()
+    // Dinh ky moi 15 phut (900.000 ms) dong bo Ring Buffer tu PSRAM xuong Flash LittleFS 1 lan
+    uint32_t now = millis();
+    if (this->count > 0 && (now - this->lastSnapshotTime >= 900000UL)) {
+        this->lastSnapshotTime = now;
+        this->saveSnapshot();
+    }
 }
 
 String DataLogger::getHistoryJson(uint16_t filterMinutes) {

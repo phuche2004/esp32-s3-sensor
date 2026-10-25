@@ -50,7 +50,7 @@ constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 15000; // Thu ket noi trong 15s, ne
 // ==========================================
 // CAU HINH BACKEND TELEMETRY
 // ==========================================
-constexpr const char* DEFAULT_BACKEND_URL  = "http://172.16.10.169:3000/api/sensor";
+constexpr const char* DEFAULT_BACKEND_URL  = "http://103.75.187.86:4000/api/sensor";
 
 // ==========================================
 // CAU HINH TEN MIEN NOI BO (mDNS)

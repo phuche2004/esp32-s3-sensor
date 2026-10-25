@@ -157,22 +157,21 @@ void loop() {
         DataLogger::getInstance().addPoint(currentTemperature, currentHumidity);
       }
 
-      Serial.printf("[Sensor] Nhiet do: %.2f *C | Do am: %.2f %% | Chip: %.1f *C | CPU: %.1f%% (C0:%.0f%% C1:%.0f%%)",
-                    t, h, StressTester::getInstance().getChipTemperature(),
-                    StressTester::getInstance().getCpuLoad(),
-                    StressTester::getInstance().getCpuLoadCore0(),
-                    StressTester::getInstance().getCpuLoadCore1());
-      if (StressTester::getInstance().isRunning()) {
-        Serial.printf(" [STRESS: %us]", StressTester::getInstance().getElapsedSec());
-      }
-
-      // Kiem tra dieu kien canh bao theo nguong da cau hinh
-      if (t > sensorSettings.tempAlert || h > sensorSettings.humAlert) {
+      bool isAlert = (t > sensorSettings.tempAlert || h > sensorSettings.humAlert);
+      if (isAlert) {
         alarmSystem.trigger();
-        Serial.println(" -> [CANH BAO]");
       } else {
         alarmSystem.silence();
-        Serial.println(" -> [BINH THUONG]");
+      }
+
+      // Chi in log Sensor dinh ky moi 10 giay (hoac khi co canh bao) de tranh tran Serial
+      static uint32_t lastSensorPrintMs = 0;
+      if (isAlert || (currentMillis - lastSensorPrintMs >= 10000) || StressTester::getInstance().isRunning()) {
+        lastSensorPrintMs = currentMillis;
+        Serial.printf("[Sensor] Nhiet do: %.2f *C | Do am: %.2f %% | Chip: %.1f *C | CPU: %.1f%% -> %s\n",
+                      t, h, StressTester::getInstance().getChipTemperature(),
+                      StressTester::getInstance().getCpuLoad(),
+                      isAlert ? "[CANH BAO]" : "[BINH THUONG]");
       }
       portal.updateSensorData(currentTemperature, currentHumidity, true);
     } else {

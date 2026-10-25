@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <Arduino.h>
 #include <WebServer.h>
 #include "WebStyles.h"
@@ -31,7 +31,7 @@ inline void streamCaptivePortalHTML(WebServer &server, const String &savedSSID, 
     chunk += savedUser;
     chunk += F("'></div><label>Mật Khẩu (Password)</label><input type='password' id='password' name='password' placeholder='Nhập mật khẩu Wi-Fi' value='");
     chunk += savedPass;
-    chunk += F("'><label>Địa Chỉ Backend API (HTTP POST)</label><input type='text' id='backend' name='backend' placeholder='http://ip-server:3000/api/sensor' value='");
+    chunk += F("'><label>Địa Chỉ Backend API (HTTP POST)</label><input type='text' id='backend' name='backend' placeholder='http://103.75.187.86:4000/api/sensor' value='");
     chunk += savedBackend;
     chunk += F("'><button type='submit' id='btnSubmit' class='btn-submit'>Lưu &amp; Kết Nối Ngay</button></form><button type='button' class='btn-reset-wifi' id='btnResetWifi' onclick='resetWifiCredentials()'>Ngắt mạng Wi-Fi</button></div>");
     server.sendContent(chunk);
