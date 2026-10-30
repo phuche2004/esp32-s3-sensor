@@ -329,62 +329,48 @@ void TelemetryService::closeStream() {
 
 bool TelemetryService::ensureStreamConnected(const String &backendUrl) {
     if (this->activeClient != nullptr && this->activeClient->connected()) {
-        return true; // Da mo san duong ong Stream -> Dung tiep, khong tao HTTP Request moi!
+        return true; // Da mo san duong ong WebSocket -> Dung tiep, 0 tao request moi!
     }
 
     String host, path;
     uint16_t port = 80;
     bool isHttps = false;
     if (!parseBackendUrl(backendUrl, host, port, path, isHttps)) {
-        Serial.println("[Telemetry-Stream] LOI: Dinh dang Backend URL khong hop le!");
+        Serial.println("[Telemetry-WS] LOI: Dinh dang Backend URL khong hop le!");
         return false;
     }
 
     if (isHttps) {
-        this->secureClient.setInsecure(); // Bo qua check cert SSL de tranh loi expire va tiet kiem RAM
+        this->secureClient.setInsecure();
         this->activeClient = &this->secureClient;
     } else {
         this->activeClient = &this->streamClient;
     }
 
-    if (!this->activeClient->connect(host.c_str(), port, 3000)) {
+    if (!this->activeClient->connect(host.c_str(), port, 2000)) {
         this->activeClient = nullptr;
         return false;
     }
 
-    // Tat Nagle Algorithm de moi dong JSON 1s ban di tuc thi (<2ms)
     this->activeClient->setNoDelay(true);
 
-    // GUI DUNG 1 HTTP REQUEST DUY NHAT CO TRANSFER-ENCODING: CHUNKED DE MO STREAM DUY NHAT
-    if (port == 80 || port == 443) {
-        this->activeClient->printf(
-            "POST %s HTTP/1.1\r\n"
-            "Host: %s\r\n"
-            "User-Agent: ESP32-S3-Sensor/2.0-Stream\r\n"
-            "Content-Type: application/x-ndjson\r\n"
-            "Transfer-Encoding: chunked\r\n"
-            "Connection: keep-alive\r\n"
-            "X-Device-ID: %s\r\n"
-            "X-Stream-Mode: true\r\n\r\n",
-            path.c_str(), host.c_str(), this->getDeviceId().c_str()
-        );
-    } else {
-        this->activeClient->printf(
-            "POST %s HTTP/1.1\r\n"
-            "Host: %s:%u\r\n"
-            "User-Agent: ESP32-S3-Sensor/2.0-Stream\r\n"
-            "Content-Type: application/x-ndjson\r\n"
-            "Transfer-Encoding: chunked\r\n"
-            "Connection: keep-alive\r\n"
-            "X-Device-ID: %s\r\n"
-            "X-Stream-Mode: true\r\n\r\n",
-            path.c_str(), host.c_str(), port, this->getDeviceId().c_str()
-        );
-    }
+    // GUI DUNG 1 HTTP UPGRADE REQUEST DUY NHAT XUYEN QUA CLOUDFLARE & NGINX
+    String hostHeader = (port == 80 || port == 443) ? host : (host + ":" + String(port));
+    this->activeClient->printf(
+        "GET %s HTTP/1.1\r\n"
+        "Host: %s\r\n"
+        "User-Agent: ESP32-S3-Sensor/3.0-WS\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+        "Sec-WebSocket-Version: 13\r\n"
+        "X-Device-ID: %s\r\n\r\n",
+        path.c_str(), hostHeader.c_str(), this->getDeviceId().c_str()
+    );
 
     uint32_t startWait = millis();
     while (!this->activeClient->available()) {
-        if (!this->activeClient->connected() || (millis() - startWait > 3000)) {
+        if (!this->activeClient->connected() || (millis() - startWait > 4000)) {
             this->closeStream();
             return false;
         }
@@ -394,7 +380,7 @@ bool TelemetryService::ensureStreamConnected(const String &backendUrl) {
     String statusLine = this->activeClient->readStringUntil('\n');
     statusLine.trim();
 
-    // Doc bo qua phan HTTP Response Header ban dau
+    // Doc bo qua HTTP Response Headers ban dau
     while (this->activeClient->connected()) {
         String headerLine = this->activeClient->readStringUntil('\n');
         if (headerLine == "\r" || headerLine.length() == 0) {
@@ -402,13 +388,14 @@ bool TelemetryService::ensureStreamConnected(const String &backendUrl) {
         }
     }
 
-    if (statusLine.indexOf("200") == -1) {
-        Serial.printf("[Telemetry-Stream] Server tu choi mo Stream: %s\n", statusLine.c_str());
+    // Kiem tra ma 101 Switching Protocols (hoac 200 neu test local cu)
+    if (statusLine.indexOf("101") == -1 && statusLine.indexOf("200") == -1) {
+        Serial.printf("[Telemetry-WS] Server tu choi nang cap WebSocket: %s\n", statusLine.c_str());
         this->closeStream();
         return false;
     }
 
-    Serial.println("[Telemetry-Stream] DA THIET LAP 1 HTTP REQUEST STREAM DUY NHAT! Bat dau bom data moi giay...");
+    Serial.println("[Telemetry-WS] DA THIET LAP DUONG ONG WEBSOCKET 1-REQUEST DUY NHAT! Bat dau bom data 1Hz...");
     return true;
 }
 
@@ -417,38 +404,95 @@ HttpSendResult TelemetryService::sendHttpPayload(const String &payload, const St
         return HTTP_SEND_RETRYABLE_ERROR;
     }
 
-    // Don sach cac byte du thua trong buffer doc (neu co)
+    // Don sach byte thua trong buffer doc (neu co)
     while (this->activeClient->available()) {
         this->activeClient->read();
     }
 
-    // Day 1 dong JSON (NDJSON) qua duong ong TCP dang mo san duoi dang 1 HTTP Chunk
-    size_t lineLen = payload.length() + 1; // Bao gom ca ky tu '\n'
-    String chunkHeader = String(lineLen, HEX) + "\r\n";
-    this->activeClient->print(chunkHeader);
-    size_t written = this->activeClient->print(payload + "\n\r\n");
-    if (written < lineLen) {
+    // Dong goi WebSocket Text Frame (RFC 6455, FIN=1, Opcode=0x01, Masked=1)
+    size_t len = payload.length();
+    size_t headerLen = (len < 126) ? 6 : 8;
+    size_t totalFrameLen = headerLen + len;
+
+    uint8_t *frame = (uint8_t *)malloc(totalFrameLen);
+    if (!frame) {
+        return HTTP_SEND_RETRYABLE_ERROR;
+    }
+
+    const uint8_t mask[4] = { 0x37, 0xFA, 0x21, 0x3D };
+    frame[0] = 0x81; // FIN + Text Frame
+    size_t maskOffset = 2;
+
+    if (len < 126) {
+        frame[1] = 0x80 | (uint8_t)len;
+        maskOffset = 2;
+    } else {
+        frame[1] = 0x80 | 126;
+        frame[2] = (uint8_t)((len >> 8) & 0xFF);
+        frame[3] = (uint8_t)(len & 0xFF);
+        maskOffset = 4;
+    }
+
+    memcpy(frame + maskOffset, mask, 4);
+    const char *raw = payload.c_str();
+    uint8_t *dst = frame + headerLen;
+    for (size_t i = 0; i < len; i++) {
+        dst[i] = ((uint8_t)raw[i]) ^ mask[i & 3];
+    }
+
+    size_t written = this->activeClient->write(frame, totalFrameLen);
+    free(frame);
+
+    if (written < totalFrameLen) {
         this->closeStream();
         return HTTP_SEND_RETRYABLE_ERROR;
     }
 
-    // Doi phan hoi ACK tu Server (Doc bo qua dong hex chunk length de lay dung JSON response)
-    uint32_t timeoutMs = isBatch ? 3500 : 1500;
+    // Doi ACK Frame tu Server
+    uint32_t timeoutMs = isBatch ? 4000 : 2000;
     uint32_t startWait = millis();
     String resp = "";
 
     while (millis() - startWait < timeoutMs) {
-        if (this->activeClient->available()) {
-            String line = this->activeClient->readStringUntil('\n');
-            line.trim();
-            if (line.indexOf("\"status\"") != -1) {
-                resp = line;
+        if (this->activeClient->available() >= 2) {
+            uint8_t b0 = this->activeClient->read();
+            uint8_t b1 = this->activeClient->read();
+            uint8_t opcode = b0 & 0x0F;
+            size_t rLen = b1 & 0x7F;
+
+            if (rLen == 126) {
+                uint32_t t0 = millis();
+                while (this->activeClient->available() < 2 && (millis() - t0 < 500)) {
+                    vTaskDelay(pdMS_TO_TICKS(1));
+                }
+                uint8_t hi = this->activeClient->read();
+                uint8_t lo = this->activeClient->read();
+                rLen = ((size_t)hi << 8) | lo;
+            }
+
+            if (opcode == 0x08) { // Server dong WS
+                this->closeStream();
+                return HTTP_SEND_RETRYABLE_ERROR;
+            }
+
+            // Doc noi dung payload cua Frame Server tra ve
+            String frameBody;
+            frameBody.reserve(rLen + 1);
+            uint32_t tRead = millis();
+            while (frameBody.length() < rLen && (millis() - tRead < 1000)) {
+                if (this->activeClient->available()) {
+                    frameBody += (char)this->activeClient->read();
+                } else {
+                    vTaskDelay(pdMS_TO_TICKS(1));
+                }
+            }
+
+            if (opcode == 0x01 && frameBody.indexOf("\"status\"") != -1) {
+                resp = frameBody;
                 break;
             }
         } else {
             if (!this->activeClient->connected()) {
-                Serial.printf("[Telemetry-Stream] Server dong socket khi gui goi %s -> Dong Stream!\n",
-                              isBatch ? "BATCH" : ("#" + String(seq)).c_str());
                 this->closeStream();
                 return HTTP_SEND_RETRYABLE_ERROR;
             }
@@ -457,7 +501,7 @@ HttpSendResult TelemetryService::sendHttpPayload(const String &payload, const St
     }
 
     if (resp.length() == 0) {
-        Serial.printf("[Telemetry-Stream] Timeout cho ACK goi %s -> Dong Stream!\n",
+        Serial.printf("[Telemetry-WS] Timeout cho ACK goi %s -> Reset WS!\n",
                       isBatch ? "BATCH" : ("#" + String(seq)).c_str());
         this->closeStream();
         return HTTP_SEND_RETRYABLE_ERROR;
@@ -633,6 +677,15 @@ void TelemetryService::processPayloadInternal(TelemetryPayload data) {
     // Co Wi-Fi: Neu co ban ghi tam trong PSRAM, flush xuong Flash truoc de dam bao thu tu thoi gian
     if (this->psramCount > 0) {
         this->flushPsramToFlash();
+    }
+
+    // Kiem tra ket noi WebSocket toi Server truoc khi xa Flash hoac gui goi moi (Chong treo Task Queue)
+    if (!this->ensureStreamConnected(this->cachedBackendUrl)) {
+        this->appendRecordToBuffer(rec);
+        Serial.printf("[Telemetry] Khong ket noi duoc toi %s -> Luu goi #%u vao Buffer (Dem: %u/%u, Flash: %u)\n",
+                      this->cachedBackendUrl.c_str(), data.seq, (unsigned int)this->psramCount, (unsigned int)PSRAM_BUFFER_CAPACITY,
+                      (unsigned int)this->getFlashBacklogCount());
+        return;
     }
 
     // Xa sach cac batch offline tren Flash qua Stream
